@@ -11,6 +11,12 @@ on:
 permissions:
   contents: read
 
+# Serialize whole runs per ref, in push order. Job-level concurrency alone lets an older run whose tests
+# finish later deploy over a newer one. On main a newer push replaces the pending run; PR runs just cancel.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     runs-on: ubuntu-latest
