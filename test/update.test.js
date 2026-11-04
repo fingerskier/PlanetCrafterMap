@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { claimAutoReload, createUpdateHandler } from '../src/ui/update.js'
+import { claimAutoReload, createUpdateHandler, watchControllerChange } from '../src/ui/update.js'
 
 /** In-memory Storage stand-in. */
 function memoryStorage() {
@@ -37,5 +37,35 @@ describe('createUpdateHandler', () => {
     outdated()
     expect(reload).toHaveBeenCalledTimes(1)
     expect(notice.replaceChildren).not.toHaveBeenCalled()
+  })
+})
+
+describe('watchControllerChange', () => {
+  /** @param {object|null} controller */
+  function fakeContainer(controller) {
+    const target = new EventTarget()
+    return { controller, addEventListener: target.addEventListener.bind(target), fire: () => target.dispatchEvent(new Event('controllerchange')) }
+  }
+
+  it('on a first visit, ignores the initial claim but reports every later deploy', () => {
+    const sw = fakeContainer(null)
+    const onUpdate = vi.fn()
+    watchControllerChange(sw, onUpdate)
+    sw.fire() // the first worker claims the page
+    expect(onUpdate).not.toHaveBeenCalled()
+    sw.fire() // a later deploy, tab still open
+    expect(onUpdate).toHaveBeenCalledTimes(1)
+  })
+
+  it('on a page controlled at startup, reports the first change', () => {
+    const sw = fakeContainer({})
+    const onUpdate = vi.fn()
+    watchControllerChange(sw, onUpdate)
+    sw.fire()
+    expect(onUpdate).toHaveBeenCalledTimes(1)
+  })
+
+  it('does nothing without service worker support', () => {
+    expect(() => watchControllerChange(undefined, vi.fn())).not.toThrow()
   })
 })

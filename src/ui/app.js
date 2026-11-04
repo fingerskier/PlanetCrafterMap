@@ -12,7 +12,7 @@ import { CategoryList, renderToggleList } from './panel.js'
 import { CategoryLayers, bucketByCategory, worldPoints } from './points.js'
 import { onActivate, popupContent } from './popup.js'
 import { SAVE_LAYERS, SaveLayers } from './save-layers.js'
-import { createUpdateHandler } from './update.js'
+import { createUpdateHandler, watchControllerChange } from './update.js'
 
 /**
  * @typedef {import('./points.js').MapPoint} MapPoint
@@ -96,11 +96,10 @@ export async function startApp({ baseUrl }) {
   const isCompact = () => Boolean(window.matchMedia?.(COMPACT_MEDIA).matches)
   if (isCompact()) setPanelOpen(false)
 
-  // Only a page that was already controlled at startup can be running an outdated shell; on a first
-  // visit the worker's claim just takes over a page that came from the network.
+  // A worker taking over means a new deploy, except the first claim of a page opened before any worker.
   let holdsImports = () => false
   const outdated = createUpdateHandler({ notice: ui.updateNotice, holdsImports: () => holdsImports() })
-  if (navigator.serviceWorker?.controller) navigator.serviceWorker.addEventListener('controllerchange', outdated)
+  watchControllerChange(navigator.serviceWorker, outdated)
 
   // A bare URL restores the last view (per browser), so reopening the installed app lands where you were.
   if (!location.hash) {

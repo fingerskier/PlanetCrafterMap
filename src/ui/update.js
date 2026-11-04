@@ -61,3 +61,24 @@ function sessionStore() {
     return null
   }
 }
+
+/**
+ * Call onUpdate whenever a new service worker takes control of this page. A page that was not controlled
+ * at startup (a first visit) skips the first change only: that is its first worker claiming it, not a new
+ * version. Every later change is a deploy, also in a tab that has stayed open since its first visit.
+ * (After a hard reload the page is uncontrolled although a worker is active; its first update is then
+ * missed by this listener and left to the world-file rev check.)
+ * @param {Pick<ServiceWorkerContainer, 'controller'|'addEventListener'>|undefined} sw
+ * @param {() => void} onUpdate
+ */
+export function watchControllerChange(sw, onUpdate) {
+  if (!sw) return
+  let skipClaim = !sw.controller
+  sw.addEventListener('controllerchange', () => {
+    if (skipClaim) {
+      skipClaim = false
+      return
+    }
+    onUpdate()
+  })
+}
