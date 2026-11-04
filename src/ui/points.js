@@ -3,7 +3,7 @@
 
 import L from 'leaflet'
 import { toLatLng } from '../lib/coords.js'
-import { popupContent } from './popup.js'
+import { onActivate, popupContent } from './popup.js'
 
 /**
  * @typedef {{ gId: string, x: number, y: number, z: number, id: number }} MapPoint id 0 = unknown
@@ -44,6 +44,9 @@ export function worldPoints(data) {
   return out
 }
 
+/** @returns {L.PopupOptions} */
+export const defaultPopupOptions = () => ({ autoPanPadding: L.point(24, 24) })
+
 export class CategoryLayers {
   /**
    * @param {L.Map} map
@@ -53,14 +56,16 @@ export class CategoryLayers {
    * @param {() => Marks} opts.marks collected ids and whether to hide them
    * @param {string} [opts.source] popup caption (e.g. "Your dump")
    * @param {string} [opts.stroke] marker outline colour
+   * @param {() => L.PopupOptions} [opts.popupOptions] extra popup options at open time (e.g. auto-pan padding)
    */
-  constructor(map, { renderer, categories, marks, source, stroke = '#0d1117' }) {
+  constructor(map, { renderer, categories, marks, source, stroke = '#0d1117', popupOptions = defaultPopupOptions }) {
     this.map = map
     this.renderer = renderer
     this.categories = categories
     this.marks = marks
     this.source = source
     this.stroke = stroke
+    this.popupOptions = popupOptions
     /** @type {Map<string, MapPoint[]>} */
     this.byCat = new Map()
     /** @type {Map<string, L.FeatureGroup>} */
@@ -155,7 +160,7 @@ export class CategoryLayers {
       group.addLayer(Object.assign(m, { pcPoint: p }))
     }
     // One delegated handler per group instead of one popup binding per marker.
-    group.on('click', (/** @type {any} */ e) => {
+    onActivate(group, (/** @type {any} */ e) => {
       const marker = e.propagatedFrom ?? e.layer
       const p = /** @type {MapPoint|undefined} */ (marker?.pcPoint)
       if (!p) return
@@ -170,7 +175,7 @@ export class CategoryLayers {
         id: p.id,
         collected: p.id !== 0 && this.marks().collected.has(p.id),
       })
-      L.popup({ maxWidth: 280, autoPanPadding: L.point(24, 24) }).setLatLng(marker.getLatLng()).setContent(content).openOn(this.map)
+      L.popup({ maxWidth: 280, ...this.popupOptions() }).setLatLng(marker.getLatLng()).setContent(content).openOn(this.map)
     })
     this.groups.set(catId, group)
     return group

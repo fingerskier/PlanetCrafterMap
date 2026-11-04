@@ -97,6 +97,7 @@ All formats carry a `format` tag. Bump the major version on any breaking change.
 ```
 
 `categories` includes the implicit `other` category. `extent` is the min/max of the published points, or null.
+Each world's `rev` equals the `rev` of its world file; the client treats a mismatch as a page running an older (or newer) build.
 
 ### Generated `public/data/<slug>.json` (`pcmap-world/1`)
 
@@ -163,3 +164,4 @@ The client never sends imported files anywhere. Parsing happens in the page.
 
 `BASE_PATH` sets Vite's `base`. CI takes it from `actions/configure-pages` (`base_path`), so custom domains work.
 The PWA uses `vite-plugin-pwa` (generateSW). The app shell and `data/*.json` are precached, so after the first visit the app works offline.
+After a deploy the new worker takes over open pages (`skipWaiting` + `clientsClaim`). A page still running the previous build (a `controllerchange` on a page that was controlled at startup, or a `rev` mismatch) reloads once per tab session; with imported files loaded it shows a "Map updated" notice with a Reload button instead.

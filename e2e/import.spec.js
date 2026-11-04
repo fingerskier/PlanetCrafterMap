@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import { buildSaveText } from '../test/fixtures/save-builder.js'
 import {
   COLLECTED_ID, fixtureDump, getState, importFile, openApp, pointMarkers, publishAsPrime, syntheticSave, trackErrors,
   waitReady,
@@ -74,6 +75,11 @@ test('importing a save shows its players and objects; hide-collected hides what 
   const player = page.locator('#map .pc-player')
   await expect(player).toHaveCount(1)
   await expect(player).toBeVisible()
+  // The player marker is a keyboard button: Enter opens its popup.
+  await player.focus()
+  await page.keyboard.press('Enter')
+  await expect(page.getByTestId('popup')).toContainText('Player: Test Pilot')
+  await page.evaluate(() => /** @type {any} */ (window).__pcmap.map.closePopup())
   await page.getByTestId('save-players').uncheck()
   await expect(player).toHaveCount(0)
   await page.getByTestId('save-players').check()
@@ -94,6 +100,20 @@ test('importing a save shows its players and objects; hide-collected hides what 
   await expect.poll(() => pointMarkers(page).then((m) => m.length)).toBe(6)
   // The save is still loaded next to the dump.
   await expect(player).toHaveCount(1)
+
+  expect(errors).toEqual([])
+})
+
+test('a save whose start planet is an Object.prototype key imports instead of crashing', async ({ page }) => {
+  const errors = trackErrors(page)
+  await openApp(page, 'w=humble')
+  const meta = { saveDisplayName: 'Proto', planetId: 'constructor', version: '9.999', mode: 'Standard', worldSeed: 1 }
+  const text = buildSaveText({ sections: { meta: [meta] } })
+  await importFile(page, { name: 'Proto.json', mimeType: 'application/json', buffer: Buffer.from(text, 'utf8') })
+
+  await expect(page.getByTestId('overlay-summary')).toContainText('starting on constructor')
+  await expect(page.getByTestId('import-error')).toBeHidden()
+  await expect(page.getByTestId('world-select')).toHaveValue('humble')
 
   expect(errors).toEqual([])
 })

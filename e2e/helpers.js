@@ -155,3 +155,35 @@ export async function freeMapPoints(page) {
   if (points.length < 2) throw new Error('not enough uncovered map points')
   return points
 }
+
+/**
+ * Corners and centre of the current world's frame that an overlay (panel, card) hides, after the
+ * initial fit. Empty when the whole frame lies on visible map.
+ * @param {Page} page
+ * @returns {Promise<string[]>} e.g. ['min-min under panel']
+ */
+export function coveredFrameCorners(page) {
+  return page.evaluate(() => {
+    const { map, index, getState } = /** @type {any} */ (window).__pcmap
+    const world = index.worlds.find((/** @type {any} */ w) => w.slug === getState().world)
+    const [minX, minZ, maxX, maxZ] = world.frame
+    const box = map.getContainer().getBoundingClientRect()
+    /** @type {[string, number, number][]} */
+    const probes = [['min-min', minX, minZ], ['min-max', minX, maxZ], ['max-min', maxX, minZ], ['max-max', maxX, maxZ],
+      ['centre', (minX + maxX) / 2, (minZ + maxZ) / 2]]
+    const out = []
+    for (const [name, x, z] of probes) {
+      const p = map.latLngToContainerPoint([z, x])
+      const el = document.elementFromPoint(box.left + p.x, box.top + p.y)
+      if (!el || !map.getContainer().contains(el)) out.push(`${name} under ${el ? el.closest('[id]')?.id ?? el.tagName : 'nothing'}`)
+    }
+    return out
+  })
+}
+
+/**
+ * Whether two viewport rectangles overlap.
+ * @param {{ x: number, y: number, width: number, height: number }} a
+ * @param {{ x: number, y: number, width: number, height: number }} b
+ */
+export const overlaps = (a, b) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height

@@ -50,3 +50,19 @@ export function popupContent(info) {
     h('dl', null, rows.map(([k, v]) => [h('dt', null, k), h('dd', null, h('code', null, v))])),
     copy)
 }
+
+/**
+ * Open a layer's popup on click, and on Enter or Space while one of its markers has keyboard focus.
+ * Leaflet gives `keyboard: true` markers tabindex=0 and role=button, but only bindPopup handles keys.
+ * @param {import('leaflet').Evented} layer a marker, or a group (its handler gets `propagatedFrom`)
+ * @param {(e: any) => void} open
+ */
+export function onActivate(layer, open) {
+  layer.on('click', open)
+  layer.on('keydown', (/** @type {any} */ e) => {
+    const key = e.originalEvent?.key
+    if (key !== 'Enter' && key !== ' ') return
+    e.originalEvent.preventDefault()
+    open(e)
+  })
+}

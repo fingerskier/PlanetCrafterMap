@@ -103,6 +103,15 @@ namespace PCMapDumper
 
             Logger.LogInfo(PluginName + " " + PluginVersion + " loaded. Dump key: "
                 + DescribeHotkey() + ". Output: " + ResolveOutputDirectory());
+
+            // BepInEx adds every plugin to its manager GameObject and sets HideAndDontSave on it only when
+            // BepInEx.cfg has [Chainloader] HideManagerGameObject = true. Without that, the game stops plugins
+            // after initialization: Update() never runs and the hotkey does nothing. See README.md, Requirements.
+            if ((gameObject.hideFlags & HideFlags.HideAndDontSave) == 0)
+            {
+                Logger.LogWarning("HideManagerGameObject is false in BepInEx/config/BepInEx.cfg, so the dump hotkey "
+                    + "will probably do nothing. Set [Chainloader] HideManagerGameObject = true and restart the game.");
+            }
         }
 
         void BindKey()
@@ -596,7 +605,7 @@ namespace PCMapDumper
                     case '\b': sb.Append("\\b"); break;
                     case '\f': sb.Append("\\f"); break;
                     default:
-                        if (c < 0x20 || c == ' ' || c == ' ')
+                        if (c < 0x20 || c == '\u2028' || c == '\u2029')
                         {
                             sb.Append("\\u").Append(((int)c).ToString("x4", CultureInfo.InvariantCulture));
                         }

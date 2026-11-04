@@ -40,6 +40,32 @@ describe('tools/dumper', () => {
     expect(keys).toEqual(['format', 'planet', 'gameVersion', 'randomizeMineables', 'source', 'objects', 'id', 'gId', 'pos'])
   })
 
+  it('keeps Plugin.cs pure ASCII, so no raw U+2028/U+2029 ends up in a C# literal', () => {
+    const nonAscii = plugin.split('\n').flatMap((line, i) => (/[^\x00-\x7F]/.test(line) ? [i + 1] : []))
+    expect(nonAscii).toEqual([])
+    expect(plugin).toContain("c == '\\u2028' || c == '\\u2029'")
+  })
+
+  it('documents the hotkey, the output folder and the HideManagerGameObject requirement', () => {
+    expect(csConst('DefaultKey')).toBe('"<Keyboard>/f9"')
+    expect(plugin).toMatch(/Config\.Bind\("Hotkey", "RequireCtrl", true,/)
+    expect(plugin).toMatch(/Config\.Bind\("Hotkey", "RequireShift", true,/)
+    expect(readme).toContain('**Ctrl+Shift+F9**')
+    expect(plugin).toContain('Path.Combine(Paths.ConfigPath, "pcmap-dumps")')
+    expect(readme).toContain('`<GameDir>/BepInEx/config/pcmap-dumps/<Planet>-<yyyyMMdd-HHmmss>.json`')
+    expect(readme).toContain('**`HideManagerGameObject = true`** in `<GameDir>/BepInEx/config/BepInEx.cfg`')
+    const awake = plugin.slice(plugin.indexOf('void Awake()'), plugin.indexOf('void BindKey()'))
+    expect(awake).toContain('if ((gameObject.hideFlags & HideFlags.HideAndDontSave) == 0)')
+    expect(awake).toMatch(/LogWarning\("HideManagerGameObject is false/)
+  })
+
+  it('accounts for the Awake() hideFlags self-check in the API verification section', () => {
+    const section = readme.slice(readme.indexOf('## API verification'), readme.indexOf('## License'))
+    expect(plugin).toContain('gameObject.hideFlags & HideFlags.HideAndDontSave')
+    expect(section).toContain('`(gameObject.hideFlags & HideFlags.HideAndDontSave) == 0`')
+    expect(section).toContain('`Chainloader.ManagerObject`')
+  })
+
   it('documents a synthetic output example with the contract shape', () => {
     const example = JSON.parse(readme.match(/```json\n([\s\S]*?)```/)[1])
     expect(Object.keys(example)).toEqual(['format', 'planet', 'gameVersion', 'randomizeMineables', 'source', 'objects'])

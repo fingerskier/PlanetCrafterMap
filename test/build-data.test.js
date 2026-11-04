@@ -153,31 +153,48 @@ describe('buildData changes and failures', () => {
     expect(after[0].rev).toBe(before[0].rev)
   })
 
-  it('recreates the output directory', async () => {
+  it('recreates the output directory, deleting stale outputs and OS metadata files', async () => {
     const outDir = path.join(await tmp(), 'out')
     await mkdir(outDir)
-    await writeFile(path.join(outDir, 'stale.json'), '{}')
+    await writeFile(path.join(outDir, 'stale.json'), '{"format":"pcmap-world/1"}')
+    for (const junk of ['.DS_Store', '._prime.json', 'Thumbs.db', 'desktop.ini']) await writeFile(path.join(outDir, junk), 'x')
     await buildData({ rootDir: ROOT, dumpsDir: path.join(FIXTURES, 'valid'), outDir, ...quiet })
-    expect(await readdir(outDir)).not.toContain('stale.json')
+    expect((await readdir(outDir)).sort()).toEqual(['index.json', ...SLUGS.map((s) => `${s}.json`)].sort())
   })
 
-  it('treats a missing dumps directory as empty', async () => {
-    const { result } = await build(path.join(await tmp(), 'does-not-exist'))
+  it('treats a missing default dumps directory as empty', async () => {
+    const root = await tmp()
+    await mkdir(path.join(root, 'data'))
+    for (const f of ['worlds.json', 'categories.json']) await cp(path.join(ROOT, 'data', f), path.join(root, 'data', f))
+    const result = await buildData({ rootDir: root, outDir: path.join(root, 'out'), ...quiet })
     expect(result.worlds.map((w) => w.count)).toEqual([0, 0, 0, 0, 0, 0])
-    expect(result.warnings.join('\n')).toMatch(/no dumps directory/)
+    expect(result.warnings).toEqual(['data/dumps: no dumps directory; every world will be empty'])
+  })
+
+  it('fails, and writes nothing, when an explicit dumps directory is missing or not a directory', async () => {
+    const dir = await tmp()
+    await writeFile(path.join(dir, 'a-file'), 'x')
+    for (const [name, problem] of [['does-not-exist', 'does not exist'], ['a-file', 'is not a directory']]) {
+      const outDir = path.join(dir, 'out')
+      const e = await failure(buildData({ rootDir: ROOT, dumpsDir: path.join(dir, name), outDir, ...quiet }))
+      expect(e).toBeInstanceOf(BuildDataError)
+      expect(e.errors).toEqual([`${path.join(dir, name)}: dumps directory ${problem}`])
+      await expect(readdir(outDir)).rejects.toMatchObject({ code: 'ENOENT' })
+    }
   })
 
   it('rejects a dump whose planet disagrees with its folder, and writes nothing', async () => {
     const outDir = path.join(await tmp(), 'out')
     await mkdir(outDir)
-    await writeFile(path.join(outDir, 'previous.json'), 'untouched')
+    const previous = '{"format":"pcmap-world/1","untouched":true}'
+    await writeFile(path.join(outDir, 'previous.json'), previous)
     const e = await failure(buildData({ rootDir: ROOT, dumpsDir: path.join(FIXTURES, 'mismatch'), outDir, ...quiet }))
     expect(e).toBeInstanceOf(BuildDataError)
     expect(e.errors).toEqual([
       "test/fixtures/dumps/mismatch/Prime/wrong-planet.json: planet 'Humble' does not match its folder 'Prime' (Prime)",
     ])
     expect(await readdir(outDir)).toEqual(['previous.json'])
-    expect(await readFile(path.join(outDir, 'previous.json'), 'utf8')).toBe('untouched')
+    expect(await readFile(path.join(outDir, 'previous.json'), 'utf8')).toBe(previous)
   })
 
   it('reports every error at once', async () => {
@@ -228,20 +245,88 @@ describe('buildData changes and failures', () => {
     await cp(path.join(ROOT, 'data', 'worlds.json'), path.join(root, 'data', 'worlds.json'))
     await cp(path.join(ROOT, 'data', 'categories.json'), path.join(root, 'data', 'categories.json'))
     await writeFile(path.join(root, 'marker'), 'x')
+    const dump = path.join(root, 'data', 'dumps', 'Prime', 'Prime-20261104.json')
+    await mkdir(path.dirname(dump), { recursive: true })
+    await cp(path.join(FIXTURES, 'valid', 'Prime', '01-dumper.json'), dump)
     for (const outDir of [root, path.join(root, 'data'), path.join(root, 'data', 'dumps')]) {
       const e = await failure(buildData({ rootDir: root, outDir, ...quiet }))
       expect(e.errors.join('\n')).toMatch(/refusing to delete/)
     }
+    // Inside the sources: a world dump folder (even an empty or missing one) and data/ itself.
+    for (const [outDir, inside] of [['data/dumps/Prime', 'dumps'], ['data/dumps/Skeo', 'dumps'], ['data/out', 'data/ sources']]) {
+      const e = await failure(buildData({ rootDir: root, outDir, ...quiet }))
+      expect(e.errors).toEqual([`output directory ${path.join(root, outDir)}: refusing to delete a directory inside the ${inside}`])
+    }
     expect(await readFile(path.join(root, 'marker'), 'utf8')).toBe('x')
+    expect(await readdir(path.dirname(dump))).toEqual(['Prime-20261104.json'])
+    expect(await readdir(path.join(root, 'data', 'dumps'))).toEqual(['Prime'])
+  })
+
+  it('refuses an output directory inside an explicit dumps directory outside data/', async () => {
+    const dumps = path.join(await tmp(), 'pcmap-dumps')
+    await mkdir(path.join(dumps, 'Prime'), { recursive: true })
+    await cp(path.join(FIXTURES, 'valid', 'Prime', '01-dumper.json'), path.join(dumps, 'Prime', 'a.json'))
+    const outDir = path.join(dumps, 'out')
+    for (const exists of [false, true]) {
+      if (exists) await mkdir(outDir)
+      const e = await failure(buildData({ rootDir: ROOT, dumpsDir: dumps, outDir, ...quiet }))
+      expect(e.errors).toEqual([`output directory ${outDir}: refusing to delete a directory inside the dumps`])
+      expect((await readdir(dumps)).sort()).toEqual(exists ? ['Prime', 'out'] : ['Prime'])
+      if (exists) expect(await readdir(outDir)).toEqual([])
+    }
+  })
+
+  it('rebuilds over its own older-format or damaged outputs', async () => {
+    const outDir = path.join(await tmp(), 'out')
+    await mkdir(outDir)
+    await writeFile(path.join(outDir, 'index.json'), '{"format":"pcmap-index/0","worlds":[]}')
+    await writeFile(path.join(outDir, 'old-world.json'), '{"format":"pcmap-world/0"}')
+    await writeFile(path.join(outDir, 'future.json'), '{"format":"pcmap-world/12"}')
+    await writeFile(path.join(outDir, 'prime.json'), '')
+    await writeFile(path.join(outDir, 'skeo.json'), '{"format":"pcmap-world/1","world":"Sk')
+    await buildData({ rootDir: ROOT, dumpsDir: path.join(FIXTURES, 'valid'), outDir, ...quiet })
+    expect((await readdir(outDir)).sort()).toEqual(['index.json', ...SLUGS.map((s) => `${s}.json`)].sort())
+    expect(await readJson(outDir, 'prime.json')).toMatchObject({ format: 'pcmap-world/1', world: 'Prime' })
+  })
+
+  it('still refuses dumps, other JSON, and damaged files it would not write, even under generated names', async () => {
+    const outDir = path.join(await tmp(), 'out')
+    await mkdir(outDir)
+    const files = {
+      'prime.json': await readFile(path.join(FIXTURES, 'valid', 'Prime', '01-dumper.json'), 'utf8'),
+      'humble.json': '{"name":"no format tag"}',
+      'notes.json': '',
+      'skeo.json': '{"format":"pcmap-worlds/1"}',
+    }
+    for (const [f, text] of Object.entries(files)) await writeFile(path.join(outDir, f), text)
+    const e = await failure(buildData({ rootDir: ROOT, dumpsDir: path.join(FIXTURES, 'valid'), outDir, ...quiet }))
+    expect(e.errors).toEqual([`output directory ${outDir}: refusing to delete it: it holds entries build-data does not ` +
+      'write (humble.json, notes.json, prime.json, ...); some are pcmap-dump/1 dumps; choose another --out'])
+    for (const [f, text] of Object.entries(files)) expect(await readFile(path.join(outDir, f), 'utf8')).toBe(text)
   })
 
   it('refuses to recreate an output directory holding files it did not write', async () => {
     const outDir = path.join(await tmp(), 'src')
     await mkdir(path.join(outDir, 'sub'), { recursive: true })
     await writeFile(path.join(outDir, 'main.js'), '// precious')
+    await writeFile(path.join(outDir, 'package.json'), '{"name":"precious"}')
     const e = await failure(buildData({ rootDir: ROOT, dumpsDir: path.join(FIXTURES, 'valid'), outDir, ...quiet }))
-    expect(e.errors).toEqual([expect.stringMatching(/refusing to delete it: it holds entries build-data does not write \(main\.js, sub\)/)])
+    expect(e.errors).toEqual([expect.stringMatching(
+      /refusing to delete it: it holds entries build-data does not write \(main\.js, package\.json, sub\); empty it/)])
     expect(await readFile(path.join(outDir, 'main.js'), 'utf8')).toBe('// precious')
+  })
+
+  it('refuses an output directory holding dumps (e.g. the dumper folder passed as --out)', async () => {
+    const outDir = path.join(await tmp(), 'pcmap-dumps')
+    await mkdir(outDir)
+    const dump = path.join(outDir, 'Prime-20261104-201500.json')
+    await cp(path.join(FIXTURES, 'valid', 'Prime', '01-dumper.json'), dump)
+    const before = await readFile(dump)
+    const e = await failure(buildData({ rootDir: ROOT, dumpsDir: path.join(FIXTURES, 'valid'), outDir, ...quiet }))
+    expect(e.errors).toEqual([expect.stringMatching(
+      /\(Prime-20261104-201500\.json\); some are pcmap-dump\/1 dumps; choose another --out$/)])
+    expect(await readdir(outDir)).toEqual(['Prime-20261104-201500.json'])
+    expect(await readFile(dump)).toEqual(before)
   })
 })
 
@@ -271,6 +356,14 @@ describe('CLI', () => {
     expect(r.stderr).toMatch(/build-data failed with 6 error\(s\)/)
     expect(r.stderr).toMatch(/folder 'Atlantis' is not a world id/)
     expect(r.stderr).toMatch(/unknown planet 'Nowhere'/)
+  })
+
+  it('exits 1 under --quiet when --dumps does not exist', async () => {
+    const dir = await tmp()
+    const r = run('--dumps', path.join(dir, 'typo-missing'), '--out', path.join(dir, 'out'), '-q')
+    expect(r.status).toBe(1)
+    expect(r.stderr).toMatch(/typo-missing: dumps directory does not exist/)
+    expect(await readdir(dir)).toEqual([])
   })
 
   it('exits 2 on unknown flags', () => {

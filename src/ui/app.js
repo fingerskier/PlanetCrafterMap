@@ -10,8 +10,9 @@ import { $, h, plural } from './dom.js'
 import { importFile } from './importer.js'
 import { CategoryList, renderToggleList } from './panel.js'
 import { CategoryLayers, bucketByCategory, worldPoints } from './points.js'
-import { popupContent } from './popup.js'
+import { onActivate, popupContent } from './popup.js'
 import { SAVE_LAYERS, SaveLayers } from './save-layers.js'
+import { createUpdateHandler } from './update.js'
 
 /**
  * @typedef {import('./points.js').MapPoint} MapPoint
@@ -29,6 +30,10 @@ const HASH_DELAY = 250
 const MAX_WARNINGS = 50
 const FILE_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*\.json$/
 const README = 'https://github.com/fingerskier/PlanetCrafterMap#readme'
+/** Screens where the open panel would cover most of the map: it starts collapsed there. */
+const COMPACT_MEDIA = '(max-width: 720px), (max-height: 500px)'
+/** The fit / popup area skips an overlay whose cut would leave less than this (px) either way. */
+const MIN_FREE = 120
 
 /**
  * Start the app. Resolves once the initial hash state is applied (or a fatal error is shown); sets
@@ -40,6 +45,7 @@ export async function startApp({ baseUrl }) {
   const ui = {
     map: $('#map'),
     panel: $('#panel'),
+    panelHead: /** @type {HTMLElement} */ ($('#panel .panel-head')),
     panelBody: $('#panel-body'),
     panelToggle: /** @type {HTMLButtonElement} */ ($('[data-testid="panel-toggle"]')),
     worldSelect: /** @type {HTMLSelectElement} */ ($('[data-testid="world-select"]')),
@@ -69,6 +75,7 @@ export async function startApp({ baseUrl }) {
     emptyWorld: $('#empty-world'),
     emptyDismiss: $('#empty-dismiss'),
     fatal: $('#fatal'),
+    updateNotice: $('#update-notice'),
   }
 
   /** @param {string} message */
@@ -78,6 +85,22 @@ export async function startApp({ baseUrl }) {
     ui.fatal.hidden = false
     root.dataset.error = '1'
   }
+
+  /** @param {boolean} open */
+  const setPanelOpen = (open) => {
+    ui.panel.classList.toggle('collapsed', !open)
+    ui.panelBody.hidden = !open
+    ui.panelToggle.setAttribute('aria-expanded', String(open))
+    ui.panelToggle.title = open ? 'Collapse panel' : 'Expand panel'
+  }
+  const isCompact = () => Boolean(window.matchMedia?.(COMPACT_MEDIA).matches)
+  if (isCompact()) setPanelOpen(false)
+
+  // Only a page that was already controlled at startup can be running an outdated shell; on a first
+  // visit the worker's claim just takes over a page that came from the network.
+  let holdsImports = () => false
+  const outdated = createUpdateHandler({ notice: ui.updateNotice, holdsImports: () => holdsImports() })
+  if (navigator.serviceWorker?.controller) navigator.serviceWorker.addEventListener('controllerchange', outdated)
 
   // A bare URL restores the last view (per browser), so reopening the installed app lands where you were.
   if (!location.hash) {
@@ -127,8 +150,10 @@ export async function startApp({ baseUrl }) {
     openedView: null,
     loadToken: 0,
     emptyDismissed: false,
+    popupOpen: false,
     rendered: false,
   }
+  holdsImports = () => Boolean(app.save) || app.dumps.size > 0
   /** @type {Map<string, Promise<{ points: MapPoint[], gameVersion: string|null }>>} */
   const worldCache = new Map()
 
@@ -157,9 +182,9 @@ export async function startApp({ baseUrl }) {
   let pinMarker = null
 
   const marks = () => ({ collected: app.collected, hide: app.hideCollected })
-  const published = new CategoryLayers(map, { renderer, categories: cats.byId, marks })
-  const dumpLayers = new CategoryLayers(map, { renderer, categories: cats.byId, marks, source: 'Your dump', stroke: '#ffffff' })
-  const saveLayers = new SaveLayers(map, renderer)
+  const published = new CategoryLayers(map, { renderer, categories: cats.byId, marks, popupOptions })
+  const dumpLayers = new CategoryLayers(map, { renderer, categories: cats.byId, marks, popupOptions, source: 'Your dump', stroke: '#ffffff' })
+  const saveLayers = new SaveLayers(map, renderer, { popupOptions })
 
   // ---- panel widgets -----------------------------------------------------------------------------
   const catList = new CategoryList(ui.categoryList, {
@@ -233,31 +258,40 @@ export async function startApp({ baseUrl }) {
    * @returns {Promise<boolean>} false when superseded
    */
   async function applyState(s) {
+    const token = ++app.loadToken
     const world = resolveWorld(s.world)
     app.enabled = s.layers ? new Set(s.layers.filter((id) => cats.byId.has(id))) : new Set(allCatIds)
     const keepY = app.pin && s.pin && app.pin.x === s.pin.x && app.pin.z === s.pin.z ? app.pin.y : null
     app.pin = s.pin ? { x: s.pin.x, z: s.pin.z, y: keepY } : null
 
     const worldChanged = world !== app.world
-    if (worldChanged && !(await loadWorld(world))) return false
+    if (worldChanged && !(await loadWorld(world, token))) return false
+    if (!worldChanged) {
+      // This call may have superseded a load of another world that already showed it as loading.
+      ui.worldSelect.value = world.slug
+      renderWorldMeta()
+    }
 
-    if (worldChanged || !app.viewReady) map.setMaxBounds(/** @type {any} */ (null))
+    // An explicit position is honoured even outside the current bounds (a link pasted into an open tab).
+    const explicit = s.x !== undefined && s.z !== undefined
+    if (worldChanged || !app.viewReady || explicit) map.setMaxBounds(/** @type {any} */ (null))
     const frameBounds = L.latLngBounds(frameToBounds(world.frame))
-    if (s.x !== undefined && s.z !== undefined) {
+    if (explicit) {
       const zoom = s.zoom ?? (app.viewReady && !worldChanged ? map.getZoom() : map.getBoundsZoom(frameBounds))
       map.setView(toLatLng(s.x, s.z), clampZoom(zoom), { animate: false })
     } else if (worldChanged || !app.viewReady) {
       if (s.zoom !== undefined) map.setView(frameBounds.getCenter(), clampZoom(s.zoom), { animate: false })
-      else map.fitBounds(frameBounds, fitOptions())
+      // On a phone the panel is open while the world is picked; fit to what is free once it is closed.
+      else map.fitBounds(frameBounds, freeArea([isCompact() ? ui.panelHead : ui.panel, ui.empty]))
     } else if (s.zoom !== undefined) {
       map.setZoom(clampZoom(s.zoom))
     }
     app.viewReady = true
     syncRadius()
     if (worldChanged) renderBasemap()
-    // The view a world opens with is always reachable, even when it is larger than the padded data
-    // bounds (tall phone screens) or was shared from outside them.
-    if (worldChanged || !app.openedView) app.openedView = map.getBounds()
+    // The view a world opens with, or a link asks for, is always reachable, even when it is larger than
+    // the padded data bounds (tall phone screens) or lies outside them.
+    if (worldChanged || !app.openedView || explicit) app.openedView = map.getBounds()
     updateMaxBounds()
 
     catList.setEnabled(app.enabled)
@@ -275,14 +309,40 @@ export async function startApp({ baseUrl }) {
   /** @param {number} z */
   const clampZoom = (z) => Math.min(map.getMaxZoom(), Math.max(map.getMinZoom(), z))
 
-  /** Fit into the part of the map the panel does not cover (beside it on wide screens, below it on phones). */
-  const fitOptions = () => {
+  /**
+   * The part of the map the panel and the empty-state card leave free, as fitBounds padding. Each overlay
+   * is cut off the side that keeps the most area: beside the panel on wide screens, below it on phones,
+   * above or beside the card. An overlay whose cut would leave less than MIN_FREE either way is ignored.
+   * @param {HTMLElement[]} [overlays]
+   */
+  function freeArea(overlays = [ui.panel, ui.empty]) {
     const m = ui.map.getBoundingClientRect()
-    const p = ui.panel.getBoundingClientRect()
     const gap = 16
-    const beside = p.width < m.width / 2
-    const topLeft = beside ? [p.right - m.left + gap, gap] : [gap, p.bottom - m.top + gap]
-    return { paddingTopLeft: L.point(topLeft[0], topLeft[1]), paddingBottomRight: L.point(gap, gap + 24), animate: false }
+    let r = { left: m.left + gap, top: m.top + gap, right: m.right - gap, bottom: m.bottom - gap - 24 }
+    const width = (/** @type {typeof r} */ c) => c.right - c.left
+    const height = (/** @type {typeof r} */ c) => c.bottom - c.top
+    for (const el of overlays) {
+      if (el.hidden) continue
+      const o = el.getBoundingClientRect()
+      if (o.right <= r.left || o.left >= r.right || o.bottom <= r.top || o.top >= r.bottom) continue
+      const cuts = [{ ...r, left: o.right + gap }, { ...r, right: o.left - gap }, { ...r, top: o.bottom + gap }, { ...r, bottom: o.top - gap }]
+        .filter((c) => width(c) >= MIN_FREE && height(c) >= MIN_FREE)
+      if (cuts.length) r = cuts.reduce((a, b) => (width(b) * height(b) > width(a) * height(a) ? b : a))
+    }
+    return {
+      paddingTopLeft: L.point(r.left - m.left, r.top - m.top),
+      paddingBottomRight: L.point(m.right - r.right, m.bottom - r.bottom),
+      animate: false,
+    }
+  }
+
+  /**
+   * Popups pan clear of the panel, which sits above Leaflet's popup pane. The empty-state card does too,
+   * but it hides while a popup is open: on a phone with the panel open there is no room beside both.
+   */
+  function popupOptions() {
+    const { paddingTopLeft, paddingBottomRight } = freeArea([ui.panel])
+    return { autoPanPaddingTopLeft: paddingTopLeft, autoPanPaddingBottomRight: paddingBottomRight }
   }
 
   /** Smaller markers when zoomed out. */
@@ -309,6 +369,9 @@ export async function startApp({ baseUrl }) {
         if (data?.format !== 'pcmap-world/1' || !Array.isArray(data.gids) || !Array.isArray(data.points)) {
           throw new Error(`${world.file} is not a pcmap-world/1 file`)
         }
+        // index.json and every world file of one build share their revs, so a different rev means this
+        // page's index is older (or newer) than the data the worker now serves.
+        if (typeof data.rev === 'string' && typeof world.rev === 'string' && data.rev !== world.rev) outdated()
         return { points: worldPoints(data), gameVersion: typeof data.gameVersion === 'string' ? data.gameVersion : null }
       })()
       worldCache.set(world.slug, p)
@@ -317,9 +380,12 @@ export async function startApp({ baseUrl }) {
     return p
   }
 
-  /** @param {IndexWorld} world @returns {Promise<boolean>} false when superseded */
-  async function loadWorld(world) {
-    const token = ++app.loadToken
+  /**
+   * @param {IndexWorld} world
+   * @param {number} token the calling applyState's; any newer applyState supersedes this load
+   * @returns {Promise<boolean>} false when superseded
+   */
+  async function loadWorld(world, token) {
     ui.worldSelect.value = world.slug
     ui.worldMeta.textContent = 'Loading…'
     /** @type {{ points: MapPoint[], gameVersion: string|null }} */
@@ -381,13 +447,18 @@ export async function startApp({ baseUrl }) {
     map.setMaxBounds(padded)
   }
 
-  function renderWorldPanel() {
+  function renderWorldMeta() {
     const world = /** @type {IndexWorld} */ (app.world)
     const meta = []
     meta.push(world.count ? `${plural(world.count, 'published point')}` : 'No published points yet')
     if (app.worldInfo.gameVersion) meta.push(`game ${app.worldInfo.gameVersion}`)
-    ui.worldMeta.textContent = app.worldInfo.error ?? meta.join(' · ')
+    const text = app.worldInfo.error ?? meta.join(' · ')
+    if (ui.worldMeta.textContent !== text) ui.worldMeta.textContent = text // a live region: no repeats
     ui.worldMeta.classList.toggle('error', Boolean(app.worldInfo.error))
+  }
+
+  function renderWorldPanel() {
+    renderWorldMeta()
     catList.render({ categories: cats.categories, groups: cats.groups, count: (id) => published.count(id), enabled: app.enabled })
     renderOverlayBox()
     renderPointCount()
@@ -400,7 +471,7 @@ export async function startApp({ baseUrl }) {
 
   function renderEmptyState() {
     const show = Boolean(app.world) && !app.emptyDismissed && published.total === 0 && saveLayers.total === 0 && dumpLayers.total === 0
-    ui.empty.hidden = !show
+    ui.empty.hidden = !show || app.popupOpen // see popupOptions()
     if (app.world) ui.emptyWorld.textContent = app.world.name
   }
 
@@ -415,7 +486,7 @@ export async function startApp({ baseUrl }) {
     ui.coordsPin.textContent = y === null ? `Pin X ${Math.round(x)} · Z ${Math.round(z)}` : `Pin ${formatHud(x, y, z)}`
     const icon = L.divIcon({ className: 'pc-pin', iconSize: [22, 22], iconAnchor: [11, 11], html: '<span></span>' })
     pinMarker = L.marker(toLatLng(x, z), { icon, title: 'Pinned location', alt: 'Pinned location', zIndexOffset: 2000, keyboard: true })
-    pinMarker.on('click', () => {
+    onActivate(pinMarker, () => {
       const content = popupContent({ title: 'Pinned location', color: '#ff4d6d', x, y, z })
       const remove = h('button', { type: 'button', class: 'btn btn-small' }, 'Remove pin')
       remove.addEventListener('click', () => {
@@ -423,7 +494,7 @@ export async function startApp({ baseUrl }) {
         setPin(null)
       })
       content.append(remove)
-      L.popup({ maxWidth: 280, offset: L.point(0, -6) }).setLatLng(toLatLng(x, z)).setContent(content).openOn(map)
+      L.popup({ maxWidth: 280, offset: L.point(0, -6), ...popupOptions() }).setLatLng(toLatLng(x, z)).setContent(content).openOn(map)
     })
     pinMarker.addTo(map)
   }
@@ -454,6 +525,11 @@ export async function startApp({ baseUrl }) {
   })
   map.on('moveend', scheduleHashWrite)
   map.on('zoomend', syncRadius)
+  // Every popup opens with openOn, which closes the previous one first: at most one is open.
+  map.on('popupopen popupclose', (e) => {
+    app.popupOpen = e.type === 'popupopen'
+    renderEmptyState()
+  })
 
   function goto() {
     const raw = ui.goto.value
@@ -494,7 +570,8 @@ export async function startApp({ baseUrl }) {
       app.save = result
       app.collected = new Set(result.overlay.collectedSceneIds)
       const here = app.world ? result.overlay.worlds[app.world.id] : null
-      const start = result.overlay.worlds[result.overlay.startPlanet]
+      // startPlanet is the save's own string: a key such as 'constructor' must not reach Object.prototype.
+      const start = Object.hasOwn(result.overlay.worlds, result.overlay.startPlanet) ? result.overlay.worlds[result.overlay.startPlanet] : null
       const size = (/** @type {any} */ w) => (w ? w.players.length + w.objects.length + w.instances.length : 0)
       if (size(here) === 0 && size(start) > 0) target = result.overlay.startPlanet
     } else {
@@ -646,13 +723,6 @@ export async function startApp({ baseUrl }) {
     renderEmptyState()
   })
 
-  /** @param {boolean} open */
-  const setPanelOpen = (open) => {
-    ui.panel.classList.toggle('collapsed', !open)
-    ui.panelBody.hidden = !open
-    ui.panelToggle.setAttribute('aria-expanded', String(open))
-    ui.panelToggle.title = open ? 'Collapse panel' : 'Expand panel'
-  }
   ui.panelToggle.addEventListener('click', () => setPanelOpen(ui.panelBody.hidden))
 
   document.addEventListener('keydown', (e) => {

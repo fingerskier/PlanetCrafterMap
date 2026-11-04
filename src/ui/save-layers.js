@@ -3,7 +3,8 @@
 
 import L from 'leaflet'
 import { toLatLng } from '../lib/coords.js'
-import { popupContent } from './popup.js'
+import { defaultPopupOptions } from './points.js'
+import { onActivate, popupContent } from './popup.js'
 
 /**
  * @typedef {import('../lib/save.js').OverlayWorld} OverlayWorld
@@ -23,10 +24,15 @@ const BY_KEY = new Map(SAVE_LAYERS.map((l) => [l.key, l]))
 const SOURCE = 'Your save'
 
 export class SaveLayers {
-  /** @param {L.Map} map @param {L.Renderer} renderer */
-  constructor(map, renderer) {
+  /**
+   * @param {L.Map} map
+   * @param {L.Renderer} renderer
+   * @param {{ popupOptions?: () => L.PopupOptions }} [opts] extra popup options at open time
+   */
+  constructor(map, renderer, { popupOptions = defaultPopupOptions } = {}) {
     this.map = map
     this.renderer = renderer
+    this.popupOptions = popupOptions
     /** @type {OverlayWorld|null} */
     this.part = null
     /** @type {Map<SaveLayerKey, L.FeatureGroup>} */
@@ -106,11 +112,11 @@ export class SaveLayers {
         group.addLayer(Object.assign(m, { pcInfo: { title: def.label, color: def.color, source: SOURCE, gId: o.gId, x: o.x, y: o.y, z: o.z, id: o.id } }))
       }
     }
-    group.on('click', (/** @type {any} */ e) => {
+    onActivate(group, (/** @type {any} */ e) => {
       const marker = e.propagatedFrom ?? e.layer
       const info = marker?.pcInfo
       if (!info) return
-      L.popup({ maxWidth: 280, autoPanPadding: L.point(24, 24) }).setLatLng(marker.getLatLng()).setContent(popupContent(info)).openOn(this.map)
+      L.popup({ maxWidth: 280, ...this.popupOptions() }).setLatLng(marker.getLatLng()).setContent(popupContent(info)).openOn(this.map)
     })
     this.groups.set(key, group)
     return group

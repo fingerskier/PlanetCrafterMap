@@ -15,7 +15,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
 import { OTHER_ID, compileCategories } from '../src/lib/categories.js'
-import { mergeDumps, parseDumpText, toWorldData, validateDump } from '../src/lib/dump.js'
+import { DUMP_FORMAT, mergeDumps, parseDumpText, toWorldData, validateDump } from '../src/lib/dump.js'
 import { RUNTIME_ID_MIN, planetHash } from '../src/lib/planets.js'
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -26,6 +26,10 @@ const ACCESS = ['base', 'dlc', 'free-update']
 const WORLD_ID_RE = /^[A-Za-z][A-Za-z0-9]*$/
 const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 const DUMP_EXT_RE = /\.(json|csv)$/i
+// OS metadata files that may appear in the output directory; deleting them loses nothing.
+const OS_JUNK_RE = /^(\.DS_Store|\._.+|Thumbs\.db|desktop\.ini)$/i
+// What build-data writes, in any version, so a format bump can rebuild over older output.
+const OUTPUT_FORMAT_RE = /^pcmap-(index|world)\/\d+$/
 const FRAME_LIMIT = 1e6
 
 /** Every problem found, so a maintainer can fix them all in one go. */
@@ -168,7 +172,8 @@ export async function buildData({ rootDir = REPO_ROOT, dumpsDir, outDir, include
       errors.push(`data/categories.json: ${/** @type {Error} */ (e).message}`)
     }
   }
-  const outProblem = checkOutDir(outAbs, rootDir, dumpsAbs) ?? (await checkOutDirContents(outAbs))
+  const outProblem = checkOutDir(outAbs, rootDir, dumpsAbs) ??
+    (await checkOutDirContents(outAbs, worlds.map((w) => w.slug)))
   if (outProblem) errors.push(`output directory ${outAbs}: ${outProblem}`)
 
   // 2. Dumps, in sorted path order so "first wins" is reproducible.
@@ -176,7 +181,7 @@ export async function buildData({ rootDir = REPO_ROOT, dumpsDir, outDir, include
   const worldBySlug = new Map(worlds.map((w) => [w.slug, w]))
   /** @type {Map<string, { file: string, dump: import('../src/lib/dump.js').NormalizedDump }[]>} */
   const perWorld = new Map(worlds.map((w) => [w.id, []]))
-  const files = await listDumpFiles(dumpsAbs, warnings, show)
+  const files = await listDumpFiles(dumpsAbs, { explicit: dumpsDir !== undefined, errors, warnings, show })
   if (worlds.length) {
     for (const relPath of files) {
       const abs = path.join(dumpsAbs, ...relPath.split('/'))
@@ -342,15 +347,19 @@ function checkOutDir(outAbs, rootDir, dumpsAbs) {
   if (contains(outAbs, rootDir)) return 'refusing to delete a directory that contains the project root'
   if (contains(outAbs, dumpsAbs)) return 'refusing to delete a directory that contains the dumps'
   if (contains(outAbs, path.join(rootDir, 'data'))) return 'refusing to delete the data/ sources'
+  if (contains(dumpsAbs, outAbs)) return 'refusing to delete a directory inside the dumps'
+  if (contains(path.join(rootDir, 'data'), outAbs)) return 'refusing to delete a directory inside the data/ sources'
   return null
 }
 
 /**
  * The output directory is deleted and recreated, so it may only hold what this script writes
- * (top-level *.json). Anything else means the path is probably a mistake (e.g. `--out src`).
- * @param {string} outAbs
+ * (top-level pcmap-index/N and pcmap-world/N *.json of any version, or index.json/<slug>.json
+ * left unparseable by an interrupted write) plus OS metadata files. Anything else means the path
+ * is probably a mistake (e.g. `--out src`, or a dumps folder passed as `--out`).
+ * @param {string} outAbs @param {string[]} slugs of the configured worlds
  */
-async function checkOutDirContents(outAbs) {
+async function checkOutDirContents(outAbs, slugs) {
   let entries
   try {
     entries = await readdir(outAbs, { withFileTypes: true })
@@ -359,10 +368,39 @@ async function checkOutDirContents(outAbs) {
     if (code === 'ENOENT') return null
     return code === 'ENOTDIR' ? 'exists and is not a directory' : `cannot be read (${/** @type {Error} */ (e).message})`
   }
-  const foreign = entries.filter((e) => !(e.isFile() && /\.json$/i.test(e.name))).map((e) => e.name).sort()
+  const generated = new Set(['index.json', ...slugs.map((s) => `${s}.json`)])
+  /** @type {string[]} */
+  const foreign = []
+  let dumps = false
+  for (const e of entries) {
+    if (e.isFile() && OS_JUNK_RE.test(e.name)) continue
+    const format = e.isFile() && /\.json$/i.test(e.name) ? await formatOf(path.join(outAbs, e.name)) : undefined
+    if (typeof format === 'string' && OUTPUT_FORMAT_RE.test(format)) continue
+    if (format === null && generated.has(e.name)) continue
+    if (format === DUMP_FORMAT) dumps = true
+    foreign.push(e.name)
+  }
   if (!foreign.length) return null
+  foreign.sort()
   return `refusing to delete it: it holds entries build-data does not write (${foreign.slice(0, 3).join(', ')}` +
-    `${foreign.length > 3 ? ', ...' : ''}); empty it or choose another --out`
+    `${foreign.length > 3 ? ', ...' : ''}); ` +
+    (dumps ? `some are ${DUMP_FORMAT} dumps; choose another --out` : 'empty it or choose another --out')
+}
+
+/**
+ * The top-level string `format` of a JSON file: undefined when it parses without one, null when
+ * it cannot be read or parsed (e.g. truncated).
+ * @param {string} abs @returns {Promise<string|null|undefined>}
+ */
+async function formatOf(abs) {
+  let json
+  try {
+    const text = await readFile(abs, 'utf8')
+    json = JSON.parse(text.charCodeAt(0) === 0xfeff ? text.slice(1) : text)
+  } catch {
+    return null
+  }
+  return isObject(json) && typeof json.format === 'string' ? json.format : undefined
 }
 
 /**
@@ -387,10 +425,12 @@ async function readJson(abs, label, errors) {
 
 /**
  * Dump files under `dir` as sorted '/'-separated relative paths. Dotfiles, dot-directories and
- * Markdown are skipped silently; other non-dump files are skipped with a warning.
- * @param {string} dir @param {string[]} warnings @param {(p: string) => string} show
+ * Markdown are skipped silently; other non-dump files are skipped with a warning. A missing `dir`
+ * is a warning when it is the default and an error when it was given explicitly.
+ * @param {string} dir
+ * @param {{ explicit: boolean, errors: string[], warnings: string[], show: (p: string) => string }} ctx
  */
-async function listDumpFiles(dir, warnings, show) {
+async function listDumpFiles(dir, { explicit, errors, warnings, show }) {
   /** @type {string[]} */
   const out = []
   /** @param {string} abs @param {string} rel */
@@ -399,8 +439,13 @@ async function listDumpFiles(dir, warnings, show) {
     try {
       entries = await readdir(abs, { withFileTypes: true })
     } catch (e) {
-      if (/** @type {NodeJS.ErrnoException} */ (e).code === 'ENOENT' && rel === '') {
+      const code = /** @type {NodeJS.ErrnoException} */ (e).code
+      if (rel === '' && code === 'ENOENT' && !explicit) {
         warnings.push(`${show(dir)}: no dumps directory; every world will be empty`)
+        return
+      }
+      if (rel === '' && (code === 'ENOENT' || code === 'ENOTDIR')) {
+        errors.push(`${show(dir)}: dumps directory ${code === 'ENOENT' ? 'does not exist' : 'is not a directory'}`)
         return
       }
       throw e

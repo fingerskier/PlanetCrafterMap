@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { WORLD_SLUGS, freeMapPoints, openApp, trackErrors } from './helpers.js'
+import { WORLD_SLUGS, coveredFrameCorners, freeMapPoints, openApp, trackErrors } from './helpers.js'
 
 /**
  * Map X/Z under a viewport point, formatted like the cursor readout.
@@ -27,6 +27,10 @@ test('boots under the subpath without errors, lists every world and shows the em
   // The repo publishes no points yet, so the empty-state card explains how to get data.
   await expect(page.getByTestId('empty-state')).toBeVisible()
   await expect(page.getByTestId('point-count')).toHaveText('0')
+  // The world frame is fitted beside the panel and above the card, not underneath them.
+  expect(await coveredFrameCorners(page)).toEqual([])
+  // index.json and the world files come from one build: no "Map updated" notice.
+  await expect(page.getByTestId('update-notice')).toBeEmpty()
 
   expect(errors).toEqual([])
 })

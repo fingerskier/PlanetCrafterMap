@@ -15,7 +15,8 @@ JSON file. The map's published data is **generated** this way, because no openly
 
 ## What it does
 
-When you press **Ctrl+Shift+F9** (configurable) inside a loaded world, the plugin:
+When you press **Ctrl+Shift+F9** (the default; see [Configuration](#configuration-bepinexconfigplanetcraftermappcmapdumpercfg))
+inside a loaded world, the plugin:
 
 1. Optionally (on by default) **loads every Sector scene** of the planet, one at a time. Sectors are the
    chunks the game streams in near the player. Without this step, only nearby objects exist in memory.
@@ -23,8 +24,9 @@ When you press **Ctrl+Shift+F9** (configurable) inside a loaded world, the plugi
 3. Lists every `WorldObjectFromScene` component, inactive ones included. It skips anything inside a
    **procedural wreck instance** (per-save generated content) and records `{ id, gId, pos }`, with
    positions rounded to 0.01.
-4. Writes `<BepInEx>/config/pcmap-dumps/<Planet>-<yyyyMMdd-HHmmss>.json` and logs the path and counts to the
-   BepInEx log. A short message also appears on the HUD.
+4. Writes `<GameDir>/BepInEx/config/pcmap-dumps/<Planet>-<yyyyMMdd-HHmmss>.json` (local time; change the folder
+   with `Output.Directory`) and logs the full path and counts to the BepInEx log (`<GameDir>/BepInEx/LogOutput.log`).
+   A short message also appears on the HUD.
 
 It **does not** write to the save, spawn or remove anything, or patch game code (no Harmony). Its only side
 effect is the extra sector scenes it loads. That load is heavy and the game was not designed for it, so
@@ -36,6 +38,11 @@ effect is the extra sector scenes it loads. That load is heavy and the game was 
   that target game 2.104.
 - [BepInEx 5.4.x](https://github.com/BepInEx/BepInEx/releases) for **Unity Mono, x64**, installed into the
   game folder and started once, so that `BepInEx/plugins` and `BepInEx/config` exist.
+- **`HideManagerGameObject = true`** in `<GameDir>/BepInEx/config/BepInEx.cfg`, section `[Chainloader]`
+  (BepInEx's default is `false`). Without it the game stops every plugin after initialization: the plugin
+  loads, but `Update()` never runs, so the hotkey does nothing. If any of akarnokd's mods is installed, it has
+  probably set this already. The plugin logs a warning at startup when the setting is off. See the
+  [akarnokd/ThePlanetCrafterMods README](https://github.com/akarnokd/ThePlanetCrafterMods#readme).
 - To build: a .NET SDK (6.0 or newer; any SDK that can target `netstandard2.1`) and network access to
   `nuget.bepinex.dev` and `nuget.org` (see `NuGet.Config`).
 
@@ -57,15 +64,18 @@ dotnet build tools/dumper/PCMapDumper.csproj -c Release -p:GameDir="C:\Program F
 
 ## Install
 
-Copy `PCMapDumper.dll` to `<GameDir>/BepInEx/plugins/PCMapDumper/`. Start the game once. That creates
-`BepInEx/config/planetcraftermap.pcmapdumper.cfg`.
+Copy `PCMapDumper.dll` to `<GameDir>/BepInEx/plugins/PCMapDumper/`. In `<GameDir>/BepInEx/config/BepInEx.cfg`,
+set `HideManagerGameObject = true` under `[Chainloader]` (see [Requirements](#requirements)). Start the game once.
+That creates `BepInEx/config/planetcraftermap.pcmapdumper.cfg`. The log should show
+`PCMap Dumper <version> loaded. Dump key: Ctrl+Shift+<Keyboard>/f9. Output: <folder>` and no `HideManagerGameObject` warning.
 
 ## Usage (recommended procedure)
 
 1. Start a **new, throwaway save** on the planet you want to dump. In the new-game options, leave
    **"randomize mineables" OFF**. A fresh save matters because objects that a save has already mined or
    collected may be missing from the scene. With randomization on, ore *types* differ from vanilla.
-2. Once you are in the world, press **Ctrl+Shift+F9**. The game may freeze for a while as every sector loads.
+2. Once you are in the world, press **Ctrl+Shift+F9** (or your configured hotkey). The game may freeze for a while
+   as every sector loads. If nothing happens at all (no HUD text, no log line), check `HideManagerGameObject`.
 3. Wait for the HUD or the log line `PCMap dump written: …`.
 4. **Quit to desktop without saving** and restart the game before you play again.
 5. Repeat for each planet. Each dump covers only the planet you are on.
@@ -186,6 +196,10 @@ fetched sources:
   `Time.realtimeSinceStartup` and `Mathf.Max`.
 - `FindObjectsInactive.Exclude`, used only when `IncludeInactive=false`. Only `.Include` was seen.
 - `Key.RightCtrl` and `Key.RightShift`. Only the `Left*` keys were seen. `InputAction.Disable()`.
+- The `Awake()` self-check `(gameObject.hideFlags & HideFlags.HideAndDontSave) == 0`. It assumes that the
+  plugin's GameObject is BepInEx's manager object (`Chainloader.ManagerObject`), and that this object has
+  `HideAndDontSave` exactly when `HideManagerGameObject = true`. A loader that puts plugins on another GameObject
+  can make the check warn falsely, or stay silent when the setting is needed. The check only logs a warning.
 - `GetUniqueId()` returns an integer type that converts implicitly to `long`. Its value is the stable
   scene id that save files use.
 - `IsInsideAnInstance(pos, false)`: the meaning of the second argument is unknown. The call matches CheatMinimap.

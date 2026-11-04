@@ -1,9 +1,12 @@
 // Playwright e2e config. The tests run against the PRODUCTION build (service worker included), served
 // under the same kind of subpath GitHub Pages uses, so base-path and offline bugs show up here.
+// The build goes to its own directory and is served on its own port: a `npm run preview` left running on
+// Vite's default port is never mistaken for it, and dist/ stays a plain `npm run build`.
 
 import { defineConfig, devices } from '@playwright/test'
 
-const PORT = 4173
+const PORT = 4317
+const OUT_DIR = 'dist-e2e'
 const BASE_PATH = '/PlanetCrafterMap/'
 const CI = Boolean(process.env.CI)
 
@@ -22,10 +25,11 @@ export default defineConfig({
   },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
   webServer: {
-    command: `npm run build && npx vite preview --port ${PORT} --strictPort`,
+    command: `npm run data && npx vite build --outDir ${OUT_DIR} && npx vite preview --outDir ${OUT_DIR} --port ${PORT} --strictPort`,
     url: `http://localhost:${PORT}${BASE_PATH}`,
     env: { BASE_PATH },
-    reuseExistingServer: !CI,
+    // Always build the code under test; a server already on the port fails the run instead of being reused.
+    reuseExistingServer: false,
     timeout: 180_000,
     stdout: 'ignore',
     stderr: 'pipe',
