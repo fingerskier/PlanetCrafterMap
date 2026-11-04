@@ -1,0 +1,100 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    PCMapDumper: a BepInEx 5 (Mono) plugin for The Planet Crafter. See README.md.
+
+    Build (needs a local game install, whose DLLs are proprietary and are never committed):
+      dotnet build tools/dumper/PCMapDumper.csproj -c Release -p:GameDir="C:\Program Files (x86)\Steam\steamapps\common\The Planet Crafter"
+    or set the environment variable PLANET_CRAFTER_DIR. Add -p:Deploy=true to copy the DLL into
+    <GameDir>/BepInEx/plugins/PCMapDumper/.
+
+    The layout follows akarnokd/ThePlanetCrafterMods (Apache-2.0): netstandard2.1, BepInEx.Core 5.x,
+    and references into $(GameDir)\Planet Crafter_Data\Managed. Like ChadOhman/PlanetNavigator (MIT),
+    UnityEngine is referenced from the game's own Managed folder, so it matches the game's Unity
+    version exactly. See NOTICE.
+
+    STATUS: never built in this repository's CI. See README.md.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <AssemblyName>PCMapDumper</AssemblyName>
+    <RootNamespace>PCMapDumper</RootNamespace>
+    <!-- Keep in sync with Plugin.PluginVersion in Plugin.cs. -->
+    <Version>0.1.0</Version>
+    <Description>PlanetCrafterMap scene-object dumper (pcmap-dump/1)</Description>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <Deterministic>true</Deterministic>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <Platforms>AnyCPU</Platforms>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <GameDir Condition="'$(GameDir)' == ''">$(PLANET_CRAFTER_DIR)</GameDir>
+    <GameManaged>$(GameDir)/Planet Crafter_Data/Managed/</GameManaged>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Served from https://nuget.bepinex.dev/v3/index.json (see NuGet.Config). -->
+    <PackageReference Include="BepInEx.Core" Version="5.4.21" PrivateAssets="all" />
+  </ItemGroup>
+
+  <!--
+    Game and Unity assemblies, compile-time only (Private=false: never copied or redistributed).
+    If the compiler reports CS0012 ("type X is defined in an assembly that is not referenced"),
+    add that assembly here in the same way.
+  -->
+  <ItemGroup>
+    <Reference Include="Assembly-CSharp">
+      <HintPath>$(GameManaged)Assembly-CSharp.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Assembly-CSharp-firstpass">
+      <HintPath>$(GameManaged)Assembly-CSharp-firstpass.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine">
+      <HintPath>$(GameManaged)UnityEngine.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.CoreModule">
+      <HintPath>$(GameManaged)UnityEngine.CoreModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.PhysicsModule">
+      <HintPath>$(GameManaged)UnityEngine.PhysicsModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Unity.InputSystem">
+      <HintPath>$(GameManaged)Unity.InputSystem.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <!-- Many game types derive from Unity.Netcode.NetworkBehaviour. -->
+    <Reference Include="Unity.Netcode.Runtime">
+      <HintPath>$(GameManaged)Unity.Netcode.Runtime.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Unity.TextMeshPro">
+      <HintPath>$(GameManaged)Unity.TextMeshPro.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.UI">
+      <HintPath>$(GameManaged)UnityEngine.UI.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <Target Name="PCMapCheckGameDir" BeforeTargets="BeforeBuild">
+    <Error Condition="'$(GameDir)' == ''"
+           Text="GameDir is not set. Pass -p:GameDir=&quot;path\to\The Planet Crafter&quot; or set PLANET_CRAFTER_DIR." />
+    <Error Condition="!Exists('$(GameManaged)Assembly-CSharp.dll')"
+           Text="Assembly-CSharp.dll was not found in '$(GameManaged)'. Is GameDir the game's install folder?" />
+  </Target>
+
+  <Target Name="PCMapDeploy" AfterTargets="Build" Condition="'$(Deploy)' == 'true'">
+    <MakeDir Directories="$(GameDir)/BepInEx/plugins/PCMapDumper" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(GameDir)/BepInEx/plugins/PCMapDumper" />
+    <Message Importance="high" Text="PCMapDumper deployed to $(GameDir)/BepInEx/plugins/PCMapDumper" />
+  </Target>
+</Project>

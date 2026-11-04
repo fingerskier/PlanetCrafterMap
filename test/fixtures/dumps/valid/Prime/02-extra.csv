@@ -1,0 +1,6 @@
+gId,z,x,y,id,planet,note
+Iron,200,100,10,100000001,Prime,"same id as the JSON dump"
+Cobalt,-200,110,10,100000002,Prime,
+"Uranim",0,0,20,,Prime,"no id, so keyed by position"
+Uranim,0.3,0.2,20.1,,Prime,"same rounded position: duplicate"
+Titanium,5,5,5,100000003,Prime,"id clash with a different gId: conflict"

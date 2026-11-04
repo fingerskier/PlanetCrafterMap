@@ -1,0 +1,40 @@
+PCMapDumper (tools/dumper), part of PlanetCrafterMap
+Copyright 2026 PlanetCrafterMap contributors
+Licensed under the Apache License, Version 2.0 (see the LICENSE file at the repository root).
+
+This component adapts usage patterns of The Planet Crafter's modding surface from the
+Apache-2.0 projects listed below. No source file was copied. The patterns were re-implemented
+after the upstream code was read. The exact files and lines are cited in the header of Plugin.cs
+and in README.md.
+
+  ThePlanetCrafterMods
+    https://github.com/akarnokd/ThePlanetCrafterMods
+    Copyright (c) 2022-2026, David Karnok & Contributors
+    Licensed under the Apache License, Version 2.0
+    Read at commit e90edc20140278aee4a2ece2c62d9b630a2c9790. The removed CheatMinimap/Plugin_Capture.cs
+    was read at 02eaf941b71b08564a7618a2dd82648100ce298c.
+    Adapted: sector loading (/load-all-sectors and the photomapping coroutine), enumeration of
+    WorldObjectFromScene (/list-golden-containers), the current-planet lookup, the procedural-instance
+    check, the InputAction hotkey pattern, the HUD text message, and the csproj/reference layout
+    (solution_private.targets).
+
+  PlanetCrafterMods (Nicki0)
+    https://github.com/mcnicki2002/PlanetCrafterMods
+    Copyright 2025-2026 Nicolas Schaefer & Contributors
+    Licensed under the Apache License, Version 2.0
+    Read at commit 95291376e1fcd8bd4e003122f5cb4352d4c9b3fe.
+    Adapted: reading the randomizeMineables game setting, and BepInEx Paths.ConfigPath.
+
+Also consulted, for the build layout only (MIT License, Copyright (c) 2026 Chad Ohman):
+
+  PlanetNavigator
+    https://github.com/ChadOhman/PlanetNavigator (commit 5aa2d0a079df839a975f3676ba9d36471aba045b)
+    Consulted: mod/PlanetNavigator/PlanetNavigator.csproj (BepInEx.Core 5.4.21, with UnityEngine and
+    Netcode referenced from the game's Managed folder) and the "" to "Prime" planet-id mapping.
+
+Build-time dependency, not redistributed by this repository:
+  BepInEx (https://github.com/BepInEx/BepInEx), LGPL-2.1.
+
+The Planet Crafter is a work of Miju Games. This plugin is unofficial and is not affiliated with or
+endorsed by Miju Games. It contains no game code, art or text. At build time it references game
+assemblies from the user's own installation, and it never copies them.
