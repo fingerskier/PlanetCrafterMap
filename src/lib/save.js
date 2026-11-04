@@ -41,7 +41,7 @@ export class SaveFormatError extends Error {
  * @property {SectionKind[]} sectionKinds kind of each section (content-detected; position for empty ones)
  * @property {SaveRecord} meta metadata / game-settings record ({} when absent)
  * @property {string} startPlanet `meta.planetId`, or 'Prime' when empty (legacy single-planet saves)
- * @property {string|null} version `meta.version`, e.g. "2.103", or null
+ * @property {string|null} version `meta.version`, e.g. "2.103" (a finite number is stringified), else null
  * @property {boolean} randomizeMineables
  * @property {SaveRecord[]} players NB: Steam player ids exceed MAX_SAFE_INTEGER; never key on `id`
  * @property {SaveRecord[]} worldObjects
@@ -72,7 +72,8 @@ export class SaveFormatError extends Error {
  * @property {string|null} version
  * @property {string} startPlanet
  * @property {boolean} randomizeMineables
- * @property {Record<string, OverlayWorld>} worlds one entry per requested world id (always present)
+ * @property {Record<string, OverlayWorld>} worlds one entry per requested world id (always present);
+ *   null-prototype, so a save-provided key such as '__proto__' or 'constructor' finds nothing
  * @property {number[]} collectedSceneIds sorted, see {@link buildSaveOverlay}
  * @property {number[]} lootedSceneInventoryIds sorted, see {@link buildSaveOverlay}
  * @property {number[]} unknownPlanetHashes sorted, deduped
@@ -145,6 +146,8 @@ const PIPE = 0x7c
 const OPEN_BRACE = 0x7b
 const CLOSE_BRACE = 0x7d
 const SNIFF_LIMIT = 1 << 20
+/** Real saves have 9-11 sections; the cap bounds memory and per-section warnings on garbage input. */
+const MAX_SECTIONS = 64
 
 /** @param {number} c */
 const isWs = (c) => c === 0x20 || c === 0x09 || c === 0x0a || c === 0x0d || c === 0xfeff
@@ -186,6 +189,7 @@ export function isSaveText(text) {
  * the final '@' terminator is not a section. Single pass, linear time.
  * @param {string} text
  * @returns {string[][]}
+ * @throws {SaveFormatError} on an unterminated string or more than MAX_SECTIONS sections
  */
 function splitSections(text) {
   /** @type {string[][]} */
@@ -199,6 +203,12 @@ function splitSections(text) {
   const flush = (/** @type {number} */ end) => {
     const rec = text.slice(start, end).trim()
     if (rec !== '') records.push(rec)
+  }
+  const pushSection = () => {
+    if (sections.length >= MAX_SECTIONS) {
+      throw new SaveFormatError(`This is not a Planet Crafter save: it has more than ${MAX_SECTIONS} sections.`)
+    }
+    sections.push(records)
   }
   for (let i = 0; i < n; i++) {
     const c = text.charCodeAt(i)
@@ -214,7 +224,7 @@ function splitSections(text) {
       flush(i)
       start = i + 1
       if (c === AT) {
-        sections.push(records)
+        pushSection()
         records = []
       }
     }
@@ -223,7 +233,7 @@ function splitSections(text) {
     throw new SaveFormatError(`The save is damaged: a text value starting at character ${strStart} never ends.`)
   }
   flush(n)
-  if (records.length > 0 || sections.length === 0) sections.push(records)
+  if (records.length > 0 || sections.length === 0) pushSection()
   return sections
 }
 
@@ -372,7 +382,8 @@ export function parseSave(text) {
     sectionKinds,
     meta,
     startPlanet,
-    version: meta.version == null ? null : String(meta.version),
+    version: typeof meta.version === 'string' ? meta.version
+      : typeof meta.version === 'number' && Number.isFinite(meta.version) ? String(meta.version) : null,
     randomizeMineables: meta.randomizeMineables === true,
     players: list('players'),
     worldObjects: list('worldObjects'),
@@ -481,10 +492,10 @@ function classifyOrigin(id, gId, generated) {
  *   player id (Steam ids lose precision as JS numbers).
  * - **instances**: procedural wreck instances with a placed `pos`, plus `seed` and `index`.
  * - **collectedSceneIds**: scene-range ids whose record is *bare* (no field other than `id`/`gId`
- *   with a non-default value), not placed, and not listed in any inventory's `woIds`. Meaning: the
- *   object is absent from the world, i.e. it was mined, picked or destroyed, OR it is a
- *   random-appearance object whose roll failed. Records carrying state (grwth, liId, ...) are
- *   ambiguous and excluded. Untouched scene objects are not in the save at all, so this list says
+ *   with a non-default value) and not placed. Meaning: the object was taken from its scene position,
+ *   i.e. it was mined, picked or destroyed (whether consumed or still held in an inventory's `woIds`),
+ *   OR it is a random-appearance object whose roll failed. Records carrying state (grwth, liId, ...)
+ *   are ambiguous and excluded. Untouched scene objects are not in the save at all, so this list says
  *   nothing about them; join it with a scene-id dataset for positions.
  * - **lootedSceneInventoryIds**: inventory records whose id is in the scene range. A scene container
  *   uses its own world-object id as its inventory id, and its inventory is only saved once it was
@@ -500,7 +511,7 @@ export function buildSaveOverlay(parsed, worldIds) {
   const startHash = planetHash(startPlanet)
 
   /** @type {Record<string, OverlayWorld>} */
-  const worlds = {}
+  const worlds = Object.create(null)
   /** @type {Map<string, OverlayWorld>} */
   const worldById = new Map()
   /** @type {Map<number, OverlayWorld>} */
@@ -526,12 +537,9 @@ export function buildSaveOverlay(parsed, worldIds) {
     return null
   }
 
-  /** @type {Set<number>} */
-  const inInventory = new Set()
   /** @type {number[]} */
   const looted = []
   for (const inv of parsed.inventories) {
-    addIds(inv.woIds, inInventory)
     const id = toInt(inv.id)
     if (id !== null && isSceneId(id)) looted.push(id)
   }
@@ -613,7 +621,7 @@ export function buildSaveOverlay(parsed, worldIds) {
     counts.instances += w.instances.length
   }
 
-  const collectedSceneIds = sortedUnique(bareScene.filter((id) => !placedIds.has(id) && !inInventory.has(id)))
+  const collectedSceneIds = sortedUnique(bareScene.filter((id) => !placedIds.has(id)))
   const lootedSceneInventoryIds = sortedUnique(looted)
   const unknownPlanetHashes = sortedUnique([...unknownHashes])
   counts.unknownPlanet = unknownPlanet

@@ -22,8 +22,12 @@ As of this writing there is **no openly licensed dataset** of Planet Crafter POI
 interactive maps are proprietary compilations and must not be copied. So this repo ships the means to
 **generate** the data instead:
 
-1. `tools/dumper/` is a BepInEx 5 plugin. In-game, it dumps every developer-placed scene object
-   (`id`, `gId`, position) of the current planet to a `pcmap-dump/1` file.
+1. `tools/dumper/` is a BepInEx 5 plugin. In-game, **Ctrl+Shift+F9** loads every sector of the current
+   planet and dumps each developer-placed scene object (`id`, `gId`, position) to
+   `<GameDir>/BepInEx/config/pcmap-dumps/<Planet>-<timestamp>.json` (`pcmap-dump/1`). Use a fresh throwaway
+   save with *randomize mineables* off, and set `HideManagerGameObject = true` in `BepInEx.cfg`. See
+   [`tools/dumper/README.md`](tools/dumper/README.md). The plugin has **not been compiled or run yet**, so
+   expect a first-build fix or two.
 2. Drop the file into `data/dumps/<WorldId>/` (see [`data/dumps/README.md`](data/dumps/README.md)).
 3. `npm run data` validates, de-duplicates, classifies (`data/categories.json`) and writes `public/data/`.
    The build runs this step every time, so the published JSON is always derived from the committed sources.

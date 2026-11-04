@@ -213,6 +213,22 @@ describe('parseSave: framing', () => {
     expect(() => parseSave(text)).toThrow(SaveFormatError)
   })
 
+  it.each([
+    ['an "@" flood', '{"terraTokens":1}\r@' + '@'.repeat(100_000)],
+    ['65 sections', '{"terraTokens":1}' + '@'.repeat(65)],
+    ['64 "@" plus a non-empty tail', '{"terraTokens":1}' + '@'.repeat(64) + '{"gId":"x","id":1}'],
+    ['many world-object sections', '{"terraTokens":1}\r@' + '{"gId":"x","id":1}@'.repeat(1000)],
+  ])('throws SaveFormatError for more than 64 sections: %s', (_, text) => {
+    expect(() => parseSave(text)).toThrow(SaveFormatError)
+    expect(() => parseSave(text)).toThrow(/more than 64 sections/)
+  })
+
+  it('accepts exactly 64 sections', () => {
+    const p = parseSave('{"terraTokens":1}' + '@'.repeat(64))
+    expect(p.sectionCount).toBe(64)
+    expect(p.layout).toBe('unknown')
+  })
+
   it('throws TypeError for non-string input', () => {
     expect(() => parseSave(new Uint8Array(3))).toThrow(TypeError)
   })
@@ -263,8 +279,8 @@ describe('parseSave: layouts', () => {
     const o = buildSaveOverlay(p, WORLDS)
     expect(o.worlds.Prime.objects).toEqual([{ id: 207000003, gId: 'FakeBench', x: 12.5, y: 3, z: -40, origin: 'built' }])
     expect(o.worlds.Prime.players).toEqual([{ name: '', x: 11, y: 22, z: 33 }])
-    // Default-valued fields count as absent; 107000002 is held in an inventory.
-    expect(o.collectedSceneIds).toEqual([107000001])
+    // Default-valued fields count as absent; 107000002 was picked up and is held in an inventory.
+    expect(o.collectedSceneIds).toEqual([107000001, 107000002])
   })
 
   it('in-between layout (unit levels + terraTokens in section 0) is read by content', () => {
@@ -330,6 +346,17 @@ describe('parseSave: layouts', () => {
     expect(q.startPlanet).toBe('Prime')
     expect(q.version).toBe(null)
     expect(q.randomizeMineables).toBe(false)
+  })
+
+  it.each([
+    ['an object with a non-callable toString', '{"toString":0}', null],
+    ['a plain object', '{"a":1}', null],
+    ['an array', '["9.1"]', null],
+    ['a boolean', 'true', null],
+    ['a number', '2.1', '2.1'],
+  ])('meta.version that is %s', (_, raw, expected) => {
+    const p = parseSave(buildSaveText({ sections: { meta: [`{"saveDisplayName":"Fake","worldSeed":1,"version":${raw}}`] } }))
+    expect(p.version).toBe(expected)
   })
 })
 
@@ -409,6 +436,22 @@ describe('buildSaveOverlay', () => {
     expect(o.counts.unknownPlanet).toBe(4)
     expect(o.warnings.at(-1)).toMatch(/4 item\(s\) on unrecognised planet/)
     expect(o.worlds.Selenea).toBeUndefined()
+  })
+
+  it.each(['__proto__', 'constructor', 'toString'])('meta.planetId %s is no world: worlds[startPlanet] misses', (planetId) => {
+    const o = overlayOf({
+      sections: {
+        meta: [{ saveDisplayName: 'Fake', planetId, worldSeed: 1 }],
+        players: [{ id: 0, name: 'P', playerPosition: '1,2,3', planetId: '' }],
+        worldObjects: [{ id: 205000056, gId: 'FakeBench', pos: '1,2,3' }],
+      },
+    })
+    expect(o.startPlanet).toBe(planetId)
+    expect(o.worlds[planetId]).toBeUndefined()
+    expect(Object.keys(o.worlds)).toEqual(WORLDS)
+    expect(o.counts.objects + o.counts.players).toBe(0)
+    expect(o.counts.unknownPlanet).toBe(2)
+    expect(o.unknownPlanetHashes).toEqual([planetHash(planetId)])
   })
 
   it('startPlanet missing from worldIds: planet-less objects become unknown', () => {
@@ -495,13 +538,13 @@ describe('buildSaveOverlay', () => {
     expect(o.counts.instances).toBe(2)
   })
 
-  it('collectedSceneIds: bare, not placed, not held; lootedSceneInventoryIds: scene-range inventory ids', () => {
+  it('collectedSceneIds: bare and not placed (held counts); lootedSceneInventoryIds: scene-range inventory ids', () => {
     const o = overlayOf({
       sections: {
         worldObjects: [
           { id: 101000070, gId: 'FakeOre' }, // collected
           { id: 101000070, gId: 'FakeOre' }, // duplicate -> deduped
-          { id: 101000071, gId: 'FakeOre' }, // held in an inventory
+          { id: 101000071, gId: 'FakeOre' }, // picked up, held in an inventory -> collected
           { id: 101000072, gId: 'FakeLift', grwth: 100 }, // has state -> ambiguous
           { id: 101000073, gId: 'FakeCrate', liId: 101000073 }, // has state -> ambiguous
           { id: 101000074, gId: 'FakeOre', pos: '1,2,3', planet: H.Prime }, // placed
@@ -522,9 +565,9 @@ describe('buildSaveOverlay', () => {
         ],
       },
     })
-    expect(o.collectedSceneIds).toEqual([101000069, 101000070, 101000078])
+    expect(o.collectedSceneIds).toEqual([101000069, 101000070, 101000071, 101000078])
     expect(o.lootedSceneInventoryIds).toEqual([101000080, 107000083])
-    expect(o.counts.collected).toBe(3)
+    expect(o.counts.collected).toBe(4)
     expect(o.counts.looted).toBe(2)
   })
 
