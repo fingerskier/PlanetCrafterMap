@@ -1,0 +1,17 @@
+{
+  "format": "pcmap-dump/1",
+  "planet": "Prime",
+  "gameVersion": "0.0-synthetic",
+  "randomizeMineables": false,
+  "source": "synthetic-fixture 1",
+  "objects": [
+    { "id": 100000001, "gId": "Iron", "pos": [100, 10, 200] },
+    { "id": 100000002, "gId": "Cobalt", "pos": "110.04,10,-200" },
+    { "id": 100000003, "gId": "GoldenEffigie1", "pos": [-300.26, 5, 400] },
+    { "id": 100000001, "gId": "Iron", "pos": [100.5, 10, 200] },
+    { "id": 250000000, "gId": "Container1", "pos": [0, 0, 0] },
+    { "id": null, "gId": "FakeGizmo", "pos": [1, 2, 3] },
+    { "id": 100000004, "gId": "Fish3Eggs", "pos": [50, 1, 50] },
+    { "id": 100000009, "gId": "Iron", "pos": [-500, -500, -500] }
+  ]
+}

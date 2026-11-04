@@ -1,0 +1,18 @@
+{
+  "format": "pcmap-worlds/1",
+  "$comment": "frame = [minX, minZ, maxX, maxZ], the per-planet calibration rectangles of akarnokd/ThePlanetCrafterMods CheatMinimap (Apache-2.0). They set the initial view only and are not hard bounds. hash = planetHash(id) (src/lib/planets.js).",
+  "worlds": [
+    { "id": "Prime", "slug": "prime", "name": "Prime", "kind": "planet", "access": "base",
+      "hash": -1140328421, "frame": [-2000, -2000, 3000, 3000] },
+    { "id": "Humble", "slug": "humble", "name": "Humble", "kind": "planet", "access": "dlc",
+      "hash": -486276833, "frame": [-2300, -2300, 2700, 2700] },
+    { "id": "Selenea", "slug": "selenea", "name": "Selenea", "kind": "moon", "access": "free-update",
+      "hash": -1016990411, "frame": [-2000, -2000, 3000, 3000] },
+    { "id": "Aqualis", "slug": "aqualis", "name": "Aqualis", "kind": "moon", "access": "free-update",
+      "hash": -1291310150, "frame": [-3000, -3000, 4000, 4000] },
+    { "id": "Toxicity", "slug": "toxicity", "name": "Toxicity", "kind": "planet", "access": "dlc",
+      "hash": 110910045, "frame": [-2200, -2200, 2800, 2800] },
+    { "id": "Skeo", "slug": "skeo", "name": "Skeo", "kind": "moon", "access": "free-update",
+      "hash": -440810600, "frame": [-4600, -200, 1900, 6300] }
+  ]
+}

@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Planet Crafter Map</title>
+    <meta name="description" content="Fan-made, data-generated interactive maps of The Planet Crafter worlds: resource locations, your save's bases and wrecks, offline." />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#0d1117" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon-180.png" />
+  </head>
+  <body>
+    <button type="button" class="skip-link" id="skip-to-map">Skip to map</button>
+    <main id="app">
+      <div id="map" aria-label="Map. Use arrow keys to pan and plus or minus to zoom."></div>
+
+      <aside id="panel" class="panel" aria-label="Map controls">
+        <header class="panel-head">
+          <h1 class="title">
+            <img src="/icons/icon.svg" alt="" width="24" height="24" />
+            <span>Planet Crafter Map</span>
+          </h1>
+          <button type="button" class="btn btn-icon" data-testid="panel-toggle" aria-expanded="true"
+            aria-controls="panel-body" title="Collapse panel">
+            <span class="chevron" aria-hidden="true"></span>
+            <span class="visually-hidden">Toggle panel</span>
+          </button>
+        </header>
+
+        <div id="panel-body" class="panel-body">
+          <section class="section" aria-labelledby="world-label">
+            <label id="world-label" class="label" for="world-select">World</label>
+            <select id="world-select" class="input" data-testid="world-select"></select>
+            <p class="meta" id="world-meta" aria-live="polite"></p>
+          </section>
+
+          <section class="section" aria-labelledby="goto-label">
+            <label id="goto-label" class="label" for="goto">Go to coordinates</label>
+            <div class="row">
+              <input id="goto" class="input mono" data-testid="goto" type="text" inputmode="text"
+                enterkeyhint="go" autocomplete="off" spellcheck="false" placeholder="X:Y:Z or X Z"
+                aria-describedby="goto-help goto-error" />
+              <button type="button" class="btn" id="goto-go">Go</button>
+              <button type="button" class="btn" id="pin-clear" data-testid="pin-clear" hidden>Unpin</button>
+            </div>
+            <p class="hint" id="goto-help">As in the game HUD (X:Y:Z), or X,Y,Z or X Z. Press Enter.</p>
+            <p class="error" id="goto-error" data-testid="goto-error" role="alert" hidden></p>
+          </section>
+
+          <section class="section" aria-labelledby="layers-label">
+            <div class="section-head">
+              <h2 id="layers-label" class="label">Resources</h2>
+              <span class="meta"><span data-testid="point-count">0</span> shown</span>
+            </div>
+            <label class="visually-hidden" for="search">Filter categories</label>
+            <input id="search" class="input" data-testid="search" type="search" autocomplete="off"
+              spellcheck="false" placeholder="Filter categories (press /)" />
+            <div id="category-list" class="cat-list" data-testid="category-list"></div>
+          </section>
+
+          <section class="section" aria-labelledby="import-label">
+            <h2 id="import-label" class="label">Your files</h2>
+            <label class="file-label" for="import">Import a save or a dump (.json / .csv)</label>
+            <input id="import" class="file" data-testid="import" type="file"
+              accept=".json,.csv,.txt,application/json,text/csv,text/plain" aria-describedby="import-help" />
+            <p class="hint" id="import-help">Read in your browser and never uploaded.</p>
+            <p class="meta" id="import-status" aria-live="polite"></p>
+            <div class="error" id="import-error" data-testid="import-error" role="alert" hidden></div>
+            <div id="overlay-box" class="overlay-box" hidden>
+              <p class="summary" data-testid="overlay-summary" id="overlay-summary"></p>
+              <details class="warnings" id="overlay-warnings" hidden>
+                <summary></summary>
+                <ul></ul>
+              </details>
+              <div id="save-section" class="subsection" hidden>
+                <h3 class="label">Your save</h3>
+                <div id="save-layers" class="toggle-list"></div>
+              </div>
+              <div id="dump-section" class="subsection" hidden>
+                <h3 class="label">Your dump</h3>
+                <div id="dump-list" class="cat-list" data-testid="dump-list"></div>
+              </div>
+              <button type="button" class="btn" data-testid="clear-overlay" id="clear-overlay">Clear imported data</button>
+            </div>
+            <label class="check">
+              <input type="checkbox" data-testid="hide-collected" id="hide-collected" autocomplete="off" />
+              <span>Hide points your save shows as collected (dimmed otherwise)</span>
+            </label>
+          </section>
+
+          <footer class="about">
+            Fan-made. Not affiliated with Miju Games. No game assets.
+            <a href="https://github.com/fingerskier/PlanetCrafterMap#readme" target="_blank" rel="noopener">About &amp; source</a>
+          </footer>
+        </div>
+      </aside>
+
+      <div class="coords" data-testid="coords" aria-hidden="true">
+        <span id="coords-cursor">X – · Z –</span>
+        <span id="coords-pin" hidden></span>
+      </div>
+
+      <section class="card empty-state" data-testid="empty-state" aria-labelledby="empty-title" hidden>
+        <button type="button" class="btn btn-icon card-close" id="empty-dismiss" data-testid="empty-state-dismiss"
+          aria-label="Dismiss">&times;</button>
+        <h2 id="empty-title">No published points for <span id="empty-world">this world</span> yet</h2>
+        <p>
+          You can still use the map: <strong>import your save</strong> (Steam:
+          <code>%USERPROFILE%\AppData\LocalLow\MijuGames\Planet Crafter\</code>) to see your bases, wrecks and
+          players, or <strong>import a dump</strong> (<code>pcmap-dump/1</code> JSON or CSV). Files stay on your device.
+        </p>
+        <p>
+          The published data is generated, not hand-placed: a small in-game dumper exports object positions and
+          the build turns them into these maps.
+          <a href="https://github.com/fingerskier/PlanetCrafterMap#readme" target="_blank" rel="noopener">How the data is made</a>
+        </p>
+      </section>
+
+      <div class="card fatal" id="fatal" role="alert" hidden></div>
+    </main>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
