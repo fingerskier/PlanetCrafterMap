@@ -25,15 +25,15 @@ function open() {
 let queue = Promise.resolve()
 
 /**
+ * Queue one logical storage operation (all of its transactions, fallbacks included).
  * @template T
- * @param {IDBTransactionMode} mode
- * @param {(store: IDBObjectStore) => IDBRequest} run
+ * @param {() => Promise<T>} op
  * @returns {Promise<T>}
  */
-function tx(mode, run) {
-  const next = queue.then(() => runTx(mode, run))
+function serial(op) {
+  const next = queue.then(op)
   queue = next.then(() => {}, () => {})
-  return /** @type {Promise<T>} */ (next)
+  return next
 }
 
 /**
@@ -57,48 +57,72 @@ async function runTx(mode, run) {
   }
 }
 
+/** Tells other tabs of this app that the remembered save changed (they may now hold a save it no longer has). */
+const channel = typeof BroadcastChannel === 'function' ? new BroadcastChannel('pcmap-save') : null
+
+/**
+ * Run `cb` when another tab stores or forgets the remembered save.
+ * @param {() => void} cb
+ */
+export function onSaveChangedElsewhere(cb) {
+  channel?.addEventListener('message', () => cb())
+}
+
 /**
  * Store a save, replacing the previous one. A handle that cannot be stored (a browser that cannot
  * structured-clone it) is dropped and the bytes are kept.
  * @param {{ name: string, bytes: ArrayBuffer, handle?: FileSystemFileHandle|null }} save
  * @returns {Promise<boolean>} whether the save is now stored
  */
-export async function storeSave({ name, bytes, handle = null }) {
-  if (!hasIndexedDB()) return false
+export function storeSave({ name, bytes, handle = null }) {
+  if (!hasIndexedDB()) return Promise.resolve(false)
   const value = { name, bytes, savedAt: Date.now(), handle }
-  try {
-    await tx('readwrite', (s) => s.put(value, KEY))
-    return true
-  } catch {
-    if (!handle) return false
+  return serial(async () => {
+    let ok = false
     try {
-      await tx('readwrite', (s) => s.put({ ...value, handle: null }, KEY))
+      await runTx('readwrite', (s) => s.put(value, KEY))
+      ok = true
+    } catch {
+      if (handle) {
+        try {
+          await runTx('readwrite', (s) => s.put({ ...value, handle: null }, KEY))
+          ok = true
+        } catch {
+          // not stored
+        }
+      }
+    }
+    if (ok) channel?.postMessage('stored')
+    return ok
+  })
+}
+
+/** @returns {Promise<StoredSave|null>} */
+export function loadSave() {
+  if (!hasIndexedDB()) return Promise.resolve(null)
+  return serial(async () => {
+    try {
+      const v = await runTx('readonly', (s) => s.get(KEY))
+      if (!v || typeof v.name !== 'string' || !(v.bytes instanceof ArrayBuffer)) return null
+      return { name: v.name, bytes: v.bytes, savedAt: Number(v.savedAt) || 0, handle: v.handle ?? null }
+    } catch {
+      return null
+    }
+  })
+}
+
+/** @returns {Promise<boolean>} false when a stored save may still be there */
+export function forgetSave() {
+  if (!hasIndexedDB()) return Promise.resolve(true)
+  return serial(async () => {
+    try {
+      await runTx('readwrite', (s) => s.delete(KEY))
+      channel?.postMessage('forgotten')
       return true
     } catch {
       return false
     }
-  }
-}
-
-/** @returns {Promise<StoredSave|null>} */
-export async function loadSave() {
-  if (!hasIndexedDB()) return null
-  try {
-    const v = await tx('readonly', (s) => s.get(KEY))
-    if (!v || typeof v.name !== 'string' || !(v.bytes instanceof ArrayBuffer)) return null
-    return { name: v.name, bytes: v.bytes, savedAt: Number(v.savedAt) || 0, handle: v.handle ?? null }
-  } catch {
-    return null
-  }
-}
-
-export async function forgetSave() {
-  if (!hasIndexedDB()) return
-  try {
-    await tx('readwrite', (s) => s.delete(KEY))
-  } catch {
-    // storage disabled: nothing was stored either
-  }
+  })
 }
 
 /** True where a file picker that returns a re-readable handle exists. */

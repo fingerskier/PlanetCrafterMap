@@ -12,7 +12,9 @@ import { CategoryList, renderToggleList } from './panel.js'
 import { CategoryLayers, bucketByCategory, worldPoints } from './points.js'
 import { onActivate, popupContent } from './popup.js'
 import { SAVE_LAYERS, SaveLayers } from './save-layers.js'
-import { canPickWithHandle, forgetSave, loadSave, pickWithHandle, rereadHandle, rereadIfGranted, storeSave } from './save-store.js'
+import {
+  canPickWithHandle, forgetSave, loadSave, onSaveChangedElsewhere, pickWithHandle, rereadHandle, rereadIfGranted, storeSave,
+} from './save-store.js'
 import { createUpdateHandler, watchControllerChange } from './update.js'
 
 /**
@@ -145,6 +147,12 @@ export async function startApp({ baseUrl }) {
     saveReadAt: 0,
     /** the loaded save is remembered on this device, so a reload keeps it */
     savePersisted: false,
+    /** Imports, refreshes, restores and clears are numbered as they start; the latest started wins. */
+    seq: 0,
+    /** seq of the operation whose save is shown (or of the clear that removed it) */
+    saveSeq: 0,
+    /** seq of the last clear: dumps read by operations started before it are dropped */
+    clearSeq: 0,
     /** @type {Set<number>} */
     collected: new Set(),
     hideCollected: ui.hideCollected.checked,
@@ -162,6 +170,8 @@ export async function startApp({ baseUrl }) {
   }
   // A remembered save survives a reload; a dump (or a save the browser could not store) does not.
   holdsImports = () => (Boolean(app.save) && !app.savePersisted) || app.dumps.size > 0
+  // Another tab replaced or forgot the remembered save: a reload here would no longer bring this one back.
+  onSaveChangedElsewhere(() => { app.savePersisted = false })
   /** @type {Map<string, Promise<{ points: MapPoint[], gameVersion: string|null }>>} */
   const worldCache = new Map()
 
@@ -566,11 +576,15 @@ export async function startApp({ baseUrl }) {
    * @param {FileSystemFileHandle|null} [opts.handle] the file's handle, kept for "Refresh save"
    * @param {'import'|'refresh'|'restore'} [opts.mode] refresh and restore keep the current world
    * @param {number} [opts.readAt] when the bytes were read from the file (restore: when they were stored)
+   * @param {number} [opts.seq] from beginOp() when the operation started (before reading the file)
    */
-  async function handleImport(file, { handle = null, mode = 'import', readAt = Date.now() } = {}) {
+  async function handleImport(file, { handle = null, mode = 'import', readAt = Date.now(), seq = beginOp() } = {}) {
     ui.importError.hidden = true
     ui.importStatus.textContent = `${mode === 'restore' ? 'Restoring' : 'Reading'} ${file.name}…`
     const result = await importFile(file, { worldIds, defaultPlanet: app.world?.id ?? worldIds[0] })
+    // A later import, refresh or clear has started since: this result is stale.
+    const stale = result.kind === 'save' ? seq < app.saveSeq : seq < app.clearSeq
+    if (stale) return
     ui.importStatus.textContent = ''
     if (result.kind === 'error') {
       ui.importError.replaceChildren(
@@ -581,6 +595,7 @@ export async function startApp({ baseUrl }) {
     /** @type {string|null} world id worth switching to */
     let target = null
     if (result.kind === 'save') {
+      app.saveSeq = seq
       app.save = result
       app.saveHandle = handle
       app.saveReadAt = readAt
@@ -589,13 +604,10 @@ export async function startApp({ baseUrl }) {
         app.savePersisted = true
       } else {
         app.savePersisted = false
-        const bytes = await file.arrayBuffer()
-        // Superseded by a newer import or a clear while the bytes were read: do not store this one.
-        if (app.save === result) {
-          storeSave({ name: result.name, bytes, handle }).then((ok) => {
-            if (app.save === result) app.savePersisted = ok
-          })
-        }
+        // Stores are queued in the order saves are shown, and a later clear queues behind them.
+        storeSave({ name: result.name, bytes: result.bytes, handle }).then((ok) => {
+          if (app.save === result) app.savePersisted = ok
+        })
       }
       const here = app.world ? result.overlay.worlds[app.world.id] : null
       // startPlanet is the save's own string: a key such as 'constructor' must not reach Object.prototype.
@@ -684,12 +696,26 @@ export async function startApp({ baseUrl }) {
     }
   }
 
+  /** Number an operation as it starts. */
+  function beginOp() {
+    return ++app.seq
+  }
+
   function clearOverlay() {
+    const seq = beginOp()
+    app.saveSeq = seq
+    app.clearSeq = seq
     app.save = null
     app.saveHandle = null
     app.saveReadAt = 0
     app.savePersisted = false
-    forgetSave()
+    ui.importStatus.textContent = ''
+    forgetSave().then((ok) => {
+      if (!ok && app.clearSeq === seq && !app.save) {
+        showImportError('This browser did not let the map forget your save, so it may come back after a reload. ' +
+          'Try "Clear imported data" again.')
+      }
+    })
     app.collected = new Set()
     app.dumps.clear()
     saveLayers.clear()
@@ -767,11 +793,13 @@ export async function startApp({ baseUrl }) {
       ui.importInput.click()
       return
     }
+    const seq = beginOp()
     ui.refreshSave.disabled = true
     try {
       const file = await rereadHandle(handle)
-      await handleImport(file, { handle, mode: 'refresh' })
+      await handleImport(file, { handle, mode: 'refresh', seq })
     } catch (e) {
+      if (seq < app.saveSeq) return // cleared or replaced meanwhile
       const gone = e instanceof DOMException && e.name === 'NotFoundError'
       showImportError(gone
         ? `${app.save?.name ?? 'The save'} is no longer where it was. Import it again.`
@@ -821,27 +849,30 @@ export async function startApp({ baseUrl }) {
 
   /** Bring back the save remembered on this device, unless a file was imported in the meantime. */
   async function restoreSave() {
+    const seq = beginOp()
+    // Anything the user started after this (an import, a clear) wins over the remembered save.
+    const superseded = () => seq < app.saveSeq || Boolean(app.save)
     const stored = await loadSave()
-    if (!stored || app.save) return
+    if (!stored || superseded()) return
     // The live file when the browser still lets us read it silently (it may have changed since)...
     const live = stored.handle ? await rereadIfGranted(stored.handle) : null
-    if (app.save) return
+    if (superseded()) return
     if (live) {
       try {
-        await handleImport(live, { handle: stored.handle, mode: 'refresh' })
+        await handleImport(live, { handle: stored.handle, mode: 'refresh', seq })
       } catch {
         // fall back to the remembered copy below
       }
-      if (app.save) return
+      if (superseded()) return
     }
     // ...the remembered copy otherwise.
     try {
       const file = new File([stored.bytes], stored.name, { type: 'application/json' })
-      await handleImport(file, { handle: stored.handle, mode: 'restore', readAt: stored.savedAt })
+      await handleImport(file, { handle: stored.handle, mode: 'restore', readAt: stored.savedAt, seq })
     } catch (e) {
-      showImportError(`Could not restore ${stored.name}: ${errorMessage(e)}`)
+      if (!superseded()) showImportError(`Could not restore ${stored.name}: ${errorMessage(e)}`)
     }
-    if (!app.save) {
+    if (!superseded()) {
       // Unreadable now (a parser change, a damaged entry): forget it so it does not fail on every visit.
       forgetSave()
       if (ui.importError.hidden) showImportError(`The remembered save ${stored.name} could not be read and was forgotten.`)

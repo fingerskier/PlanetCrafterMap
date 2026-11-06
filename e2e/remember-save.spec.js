@@ -60,7 +60,10 @@ test('a save picked with a file handle refreshes from its file', async ({ page }
       name: 'Standard-1.json',
       queryPermission: async () => 'granted',
       requestPermission: async () => 'granted',
-      getFile: async () => new File([w.__fakeSaveText], 'Standard-1.json', { type: 'application/json' }),
+      getFile: async () => {
+        if (w.__fakeDelay) await new Promise((r) => setTimeout(r, w.__fakeDelay))
+        return new File([w.__fakeSaveText], 'Standard-1.json', { type: 'application/json' })
+      },
     }
     w.showOpenFilePicker = async () => [handle]
   })
@@ -78,6 +81,16 @@ test('a save picked with a file handle refreshes from its file', async ({ page }
   await refresh.click()
   await expect(summary).toContainText(/\b3 placed objects\b/)
   await expect(page.getByTestId('import-error')).toBeHidden()
+
+  // Clearing while a refresh is still reading the file wins: the late read neither shows nor stores it.
+  await page.evaluate(() => { /** @type {any} */ (window).__fakeDelay = 300 })
+  await refresh.click()
+  await page.getByTestId('clear-overlay').click()
+  await page.waitForTimeout(600)
+  await expect(page.locator('#overlay-box')).toBeHidden()
+  await page.reload()
+  await waitReady(page)
+  await expect(page.locator('#overlay-box')).toBeHidden()
 
   expect(errors).toEqual([])
 })
