@@ -45,6 +45,7 @@
     { "id": "toxic-spores", "label": "Toxic spores", "group": "organic", "color": "#d6a3e8", "match": ["ToxicSpores"] },
     { "id": "pristine-mushroom", "label": "Pristine mushrooms", "group": "organic", "color": "#f2c6a0", "match": ["PristineMushroom"] },
     { "id": "amber", "label": "Amber", "group": "organic", "color": "#f2a516", "match": ["Amber"] },
+    { "id": "seeds", "label": "Seeds", "group": "organic", "color": "#8fd16a", "match": ["/^Seed\\d+$/", "/^Algae\\d+Seed$/"] },
 
     { "id": "ore-vein", "label": "Ore veins", "group": "vein", "color": "#e8915c", "match": ["GenerationGroupVein"] },
     { "id": "explodable-rock", "label": "Explodable rocks", "group": "vein", "color": "#b89a7c", "match": ["RockExplodable"] },
@@ -68,6 +69,8 @@
     { "id": "portal-generator", "label": "Portal generators", "group": "wreck", "color": "#5ce0ff", "match": ["PortalGenerator1"] },
     { "id": "wreck-generator", "label": "Procedural wreck generators", "group": "wreck", "color": "#c38ad6", "match": ["ProceduralInstanceGenerator"] },
     { "id": "wreck-rock", "label": "Explodable wreck rocks", "group": "wreck", "color": "#c9b38f", "match": ["WreckRockExplodable"] },
+    { "id": "abandoned-machine", "label": "Abandoned machines", "group": "wreck", "color": "#d68a5c",
+      "match": ["/^EnergyGenerator\\d+$/", "/^Heater\\d+$/", "/^FusionGenerator\\d+$/", "/^Vegetube\\d+$/"] },
 
     { "id": "golden-effigy", "label": "Golden effigies", "group": "collectible", "color": "#ffd23f", "match": ["/^GoldenEffigie\\d+$/"] },
     { "id": "toxic-effigy", "label": "Toxic golden effigies", "group": "collectible", "color": "#c8f03c", "match": ["/^GoldenToxicityEffigie\\d+$/"] },
@@ -78,6 +81,8 @@
     { "id": "warden-altar", "label": "Warden altars", "group": "collectible", "color": "#5ef2d0", "match": ["WardenAustel"] },
     { "id": "warden-key", "label": "Warden keys", "group": "collectible", "color": "#a0fff0", "match": ["WardenKey"] },
     { "id": "animal-bones", "label": "Fossil bones", "group": "collectible", "color": "#e8dcc8", "match": ["AnimalBones"] },
+    { "id": "loose-supplies", "label": "Loose supplies", "group": "collectible", "color": "#7fd6b0",
+      "match": ["/^OxygenCapsule\\d+$/", "/^WaterBottle\\d+$/", "astrofood", "/^Rod-/"] },
 
     { "id": "larvae", "label": "Butterfly larvae", "group": "life", "color": "#b6f26b", "match": ["/^LarvaeBase\\d+$/", "/^Butterfly\\d+Larvae$/"] },
     { "id": "fish-eggs", "label": "Fish eggs", "group": "life", "color": "#5cc8ff", "match": ["/^Fish\\d+Eggs$/"] },

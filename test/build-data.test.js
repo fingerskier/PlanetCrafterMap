@@ -380,3 +380,11 @@ describe('CLI', () => {
     expect(index.worlds.map((w) => w.file)).toEqual(SLUGS.map((s) => `${s}.json`))
   })
 })
+
+describe('published sources (data/dumps)', () => {
+  it('build cleanly from vanilla dumps, with every gId in a category', async () => {
+    const { result } = await build(path.join(ROOT, 'data', 'dumps'))
+    expect(result.alerts).toEqual([])
+    for (const w of result.worlds) expect([w.id, w.unknownGids]).toEqual([w.id, []])
+  })
+})

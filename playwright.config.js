@@ -25,7 +25,7 @@ export default defineConfig({
   },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
   webServer: {
-    command: `npm run data && npx vite build --outDir ${OUT_DIR} && npx vite preview --outDir ${OUT_DIR} --port ${PORT} --strictPort`,
+    command: `node scripts/build-data.mjs --dumps test/fixtures/dumps/empty --quiet && npx vite build --outDir ${OUT_DIR} && npx vite preview --outDir ${OUT_DIR} --port ${PORT} --strictPort`,
     url: `http://localhost:${PORT}${BASE_PATH}`,
     env: { BASE_PATH },
     // Always build the code under test; a server already on the port fails the run instead of being reused.
