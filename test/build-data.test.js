@@ -416,6 +416,25 @@ describe('heightmaps', () => {
     expect(e.errors).toEqual([expect.stringMatching(/typo: heights directory does not exist/)])
   })
 
+  it('refuses to delete a basemaps/ folder holding images it did not name', async () => {
+    for (const name of ['survey.png', 'atlantis-0123456789ab.png']) {
+      const outDir = path.join(await tmp(), 'out')
+      await mkdir(path.join(outDir, 'basemaps'), { recursive: true })
+      await writeFile(path.join(outDir, 'basemaps', name), 'x')
+      const e = await failure(buildData({ rootDir: ROOT, dumpsDir: path.join(FIXTURES, 'valid'), heightsDir: NO_HEIGHTS, outDir, ...quiet }))
+      expect(e.errors).toEqual([expect.stringMatching(/holds entries build-data does not write \(basemaps\)/)])
+      expect(await readdir(path.join(outDir, 'basemaps'))).toEqual([name])
+    }
+  })
+
+  it('fails on a heightmap too thin to draw after cropping', async () => {
+    // 2 rows inside the frame: the crop keeps them, scaling down to 2048 px a side would leave none.
+    const thin = buildHeights({ minX: -2000, minZ: 0, step: 1, width: 5001, height: 2, terrain: () => 1 })
+    const dir = await heightsDir({ 'Prime/thin.heights.gz': thin })
+    const e = await failure(build(path.join(FIXTURES, 'valid'), { heightsDir: dir }))
+    expect(e.errors).toEqual([expect.stringMatching(/thin\.heights\.gz: the cropped heightmap is too thin to draw/)])
+  })
+
   it('refuses an output directory that contains the heights directory', async () => {
     const root = await tmp()
     const dir = path.join(root, 'out', 'heights')

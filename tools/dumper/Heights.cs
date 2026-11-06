@@ -91,19 +91,30 @@ namespace PCMapDumper
         public static IEnumerator Sample(List<Terrain> terrains, Rect rect, double step, int maxCells, float rayTop,
             float rayLength, Action<string> progress, Action<HeightsResult> done)
         {
-            while ((rect.width / step + 1) * (rect.height / step + 1) > maxCells)
+            // The exact grid that will be allocated: origin snapped down to a multiple of the step, far edge rounded up.
+            double minX, minZ;
+            long width, height;
+            while (true)
             {
+                minX = Math.Floor(rect.xMin / step) * step;
+                minZ = Math.Floor(rect.yMin / step) * step;
+                width = (long)Math.Ceiling((rect.xMax - minX) / step) + 1;
+                height = (long)Math.Ceiling((rect.yMax - minZ) / step) + 1;
+                if (width * height <= maxCells)
+                {
+                    break;
+                }
                 step *= 2;
             }
             var r = new HeightsResult
             {
-                MinX = Math.Floor(rect.xMin / step) * step,
-                MinZ = Math.Floor(rect.yMin / step) * step,
+                MinX = minX,
+                MinZ = minZ,
                 Step = step,
                 Terrains = terrains.Count,
+                Width = (int)width,
+                Height = (int)height,
             };
-            r.Width = (int)Math.Ceiling((rect.xMax - r.MinX) / step) + 1;
-            r.Height = (int)Math.Ceiling((rect.yMax - r.MinZ) / step) + 1;
             int n = r.Width * r.Height;
             r.Terrain = new short[n];
             r.Surface = new short[n];

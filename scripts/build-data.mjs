@@ -442,7 +442,7 @@ async function checkOutDirContents(outAbs, slugs) {
   let dumps = false
   for (const e of entries) {
     if (e.isFile() && OS_JUNK_RE.test(e.name)) continue
-    if (e.isDirectory() && e.name === BASEMAP_DIR && (await onlyGeneratedImages(path.join(outAbs, e.name)))) continue
+    if (e.isDirectory() && e.name === BASEMAP_DIR && (await onlyGeneratedImages(path.join(outAbs, e.name), slugs))) continue
     const format = e.isFile() && /\.json$/i.test(e.name) ? await formatOf(path.join(outAbs, e.name)) : undefined
     if (typeof format === 'string' && OUTPUT_FORMAT_RE.test(format)) continue
     if (format === null && generated.has(e.name)) continue
@@ -456,11 +456,21 @@ async function checkOutDirContents(outAbs, slugs) {
     (dumps ? `some are ${DUMP_FORMAT} dumps; choose another --out` : 'empty it or choose another --out')
 }
 
-/** @param {string} dir @returns {Promise<boolean>} true when it holds only *.png files and OS metadata */
-async function onlyGeneratedImages(dir) {
+/**
+ * @param {string} dir @param {string[]} slugs
+ * @returns {Promise<boolean>} true when it holds only images named as build-data names them (<slug>-<12 hex>.png)
+ *   and OS metadata
+ */
+async function onlyGeneratedImages(dir, slugs) {
+  const known = new Set(slugs)
   try {
     const entries = await readdir(dir, { withFileTypes: true })
-    return entries.every((e) => e.isFile() && (/\.png$/i.test(e.name) || OS_JUNK_RE.test(e.name)))
+    return entries.every((e) => {
+      if (!e.isFile()) return false
+      if (OS_JUNK_RE.test(e.name)) return true
+      const m = /^(.+)-[0-9a-f]{12}\.png$/.exec(e.name)
+      return Boolean(m && known.has(m[1]))
+    })
   } catch {
     return false
   }

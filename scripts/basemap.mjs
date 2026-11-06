@@ -36,6 +36,9 @@ export function renderBasemap(heights, { frame = null, maxSide = MAX_SIDE } = {}
   if (frame) grid = cropGrid(grid, frame)
   const f = Math.max(1, Math.ceil(Math.max(grid.width, grid.height) / maxSide))
   grid = downsample(grid, f)
+  if (grid.width < 2 || grid.height < 2) {
+    throw new Error(`the cropped heightmap is too thin to draw (${grid.width}x${grid.height} px after scaling by 1/${f})`)
+  }
   const img = renderRelief(grid)
   const png = encodePng(img.width, img.height, img.rgba)
   return {

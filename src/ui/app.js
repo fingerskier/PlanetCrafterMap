@@ -104,6 +104,14 @@ export async function startApp({ baseUrl }) {
   let holdsImports = () => false
   const outdated = createUpdateHandler({ notice: ui.updateNotice, holdsImports: () => holdsImports() })
   watchControllerChange(navigator.serviceWorker, outdated)
+  // Relief images are runtime-cached by the worker, which only sees requests made while it controls the page.
+  // One shown before that (a first visit) is fetched again once a worker takes over, so it is there offline.
+  /** @type {Set<string>} */
+  const uncachedImages = new Set()
+  navigator.serviceWorker?.addEventListener('controllerchange', () => {
+    for (const url of uncachedImages) fetch(url).catch(() => {})
+    uncachedImages.clear()
+  })
 
   // A bare URL restores the last view (per browser), so reopening the installed app lands where you were.
   if (!location.hash) {
@@ -452,9 +460,11 @@ export async function startApp({ baseUrl }) {
     image?.remove()
     image = null
     if (hasImage && world.basemap) {
-      image = L.imageOverlay(`${baseUrl}${world.basemap.url.replace(/^\/+/, '')}`, frameToBounds(world.basemap.bounds), {
+      const url = `${baseUrl}${world.basemap.url.replace(/^\/+/, '')}`
+      image = L.imageOverlay(url, frameToBounds(world.basemap.bounds), {
         pane: 'basemapImage', interactive: false, alt: '',
       }).addTo(map)
+      if (navigator.serviceWorker && !navigator.serviceWorker.controller) uncachedImages.add(url)
     }
   }
 
