@@ -153,6 +153,10 @@ export async function startApp({ baseUrl }) {
     saveSeq: 0,
     /** seq of the last clear: dumps read by operations started before it are dropped */
     clearSeq: 0,
+    /** seq of the operation whose progress text is showing */
+    statusSeq: 0,
+    /** bumped when another tab changes the remembered save */
+    storeEpoch: 0,
     /** @type {Set<number>} */
     collected: new Set(),
     hideCollected: ui.hideCollected.checked,
@@ -171,7 +175,10 @@ export async function startApp({ baseUrl }) {
   // A remembered save survives a reload; a dump (or a save the browser could not store) does not.
   holdsImports = () => (Boolean(app.save) && !app.savePersisted) || app.dumps.size > 0
   // Another tab replaced or forgot the remembered save: a reload here would no longer bring this one back.
-  onSaveChangedElsewhere(() => { app.savePersisted = false })
+  onSaveChangedElsewhere(() => {
+    app.storeEpoch++
+    app.savePersisted = false
+  })
   /** @type {Map<string, Promise<{ points: MapPoint[], gameVersion: string|null }>>} */
   const worldCache = new Map()
 
@@ -577,15 +584,17 @@ export async function startApp({ baseUrl }) {
    * @param {'import'|'refresh'|'restore'} [opts.mode] refresh and restore keep the current world
    * @param {number} [opts.readAt] when the bytes were read from the file (restore: when they were stored)
    * @param {number} [opts.seq] from beginOp() when the operation started (before reading the file)
+   * @param {number} [opts.epoch] restore: app.storeEpoch before the stored copy was read
    */
-  async function handleImport(file, { handle = null, mode = 'import', readAt = Date.now(), seq = beginOp() } = {}) {
+  async function handleImport(file, { handle = null, mode = 'import', readAt = Date.now(), seq = beginOp(), epoch = -1 } = {}) {
     ui.importError.hidden = true
+    app.statusSeq = seq
     ui.importStatus.textContent = `${mode === 'restore' ? 'Restoring' : 'Reading'} ${file.name}…`
     const result = await importFile(file, { worldIds, defaultPlanet: app.world?.id ?? worldIds[0] })
+    if (app.statusSeq === seq) ui.importStatus.textContent = ''
     // A later import, refresh or clear has started since: this result is stale.
     const stale = result.kind === 'save' ? seq < app.saveSeq : seq < app.clearSeq
     if (stale) return
-    ui.importStatus.textContent = ''
     if (result.kind === 'error') {
       ui.importError.replaceChildren(
         h('ul', null, result.errors.slice(0, MAX_WARNINGS).map((m) => h('li', null, m))))
@@ -601,7 +610,8 @@ export async function startApp({ baseUrl }) {
       app.saveReadAt = readAt
       app.collected = new Set(result.overlay.collectedSceneIds)
       if (mode === 'restore') {
-        app.savePersisted = true
+        // Unless another tab replaced or forgot the stored copy while it was being read.
+        app.savePersisted = epoch === app.storeEpoch
       } else {
         app.savePersisted = false
         // Stores are queued in the order saves are shown, and a later clear queues behind them.
@@ -844,12 +854,15 @@ export async function startApp({ baseUrl }) {
     configurable: true,
   })
 
+  // Numbered before the first render, so an import the user starts while it loads wins over the restore.
+  const restoreSeq = beginOp()
   await navigate(decodeHash(location.hash))
-  await restoreSave()
+  await restoreSave(restoreSeq)
 
   /** Bring back the save remembered on this device, unless a file was imported in the meantime. */
-  async function restoreSave() {
-    const seq = beginOp()
+  /** @param {number} seq */
+  async function restoreSave(seq) {
+    const epoch = app.storeEpoch
     // Anything the user started after this (an import, a clear) wins over the remembered save.
     const superseded = () => seq < app.saveSeq || Boolean(app.save)
     const stored = await loadSave()
@@ -868,7 +881,7 @@ export async function startApp({ baseUrl }) {
     // ...the remembered copy otherwise.
     try {
       const file = new File([stored.bytes], stored.name, { type: 'application/json' })
-      await handleImport(file, { handle: stored.handle, mode: 'restore', readAt: stored.savedAt, seq })
+      await handleImport(file, { handle: stored.handle, mode: 'restore', readAt: stored.savedAt, seq, epoch })
     } catch (e) {
       if (!superseded()) showImportError(`Could not restore ${stored.name}: ${errorMessage(e)}`)
     }
