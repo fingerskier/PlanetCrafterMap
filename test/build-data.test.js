@@ -179,7 +179,7 @@ describe('buildData changes and failures', () => {
     await writeFile(path.join(dir, 'a-file'), 'x')
     for (const [name, problem] of [['does-not-exist', 'does not exist'], ['a-file', 'is not a directory']]) {
       const outDir = path.join(dir, 'out')
-      const e = await failure(buildData({ rootDir: ROOT, dumpsDir: path.join(dir, name), outDir, ...quiet }))
+      const e = await failure(buildData({ rootDir: ROOT, dumpsDir: path.join(dir, name), heightsDir: NO_HEIGHTS, outDir, ...quiet }))
       expect(e).toBeInstanceOf(BuildDataError)
       expect(e.errors).toEqual([`${path.join(dir, name)}: dumps directory ${problem}`])
       await expect(readdir(outDir)).rejects.toMatchObject({ code: 'ENOENT' })
@@ -191,7 +191,7 @@ describe('buildData changes and failures', () => {
     await mkdir(outDir)
     const previous = '{"format":"pcmap-world/1","untouched":true}'
     await writeFile(path.join(outDir, 'previous.json'), previous)
-    const e = await failure(buildData({ rootDir: ROOT, dumpsDir: path.join(FIXTURES, 'mismatch'), outDir, ...quiet }))
+    const e = await failure(buildData({ rootDir: ROOT, dumpsDir: path.join(FIXTURES, 'mismatch'), heightsDir: NO_HEIGHTS, outDir, ...quiet }))
     expect(e).toBeInstanceOf(BuildDataError)
     expect(e.errors).toEqual([
       "test/fixtures/dumps/mismatch/Prime/wrong-planet.json: planet 'Humble' does not match its folder 'Prime' (Prime)",
@@ -272,7 +272,7 @@ describe('buildData changes and failures', () => {
     const outDir = path.join(dumps, 'out')
     for (const exists of [false, true]) {
       if (exists) await mkdir(outDir)
-      const e = await failure(buildData({ rootDir: ROOT, dumpsDir: dumps, outDir, ...quiet }))
+      const e = await failure(buildData({ rootDir: ROOT, dumpsDir: dumps, heightsDir: NO_HEIGHTS, outDir, ...quiet }))
       expect(e.errors).toEqual([`output directory ${outDir}: refusing to delete a directory inside the dumps`])
       expect((await readdir(dumps)).sort()).toEqual(exists ? ['Prime', 'out'] : ['Prime'])
       if (exists) expect(await readdir(outDir)).toEqual([])
@@ -287,7 +287,7 @@ describe('buildData changes and failures', () => {
     await writeFile(path.join(outDir, 'future.json'), '{"format":"pcmap-world/12"}')
     await writeFile(path.join(outDir, 'prime.json'), '')
     await writeFile(path.join(outDir, 'skeo.json'), '{"format":"pcmap-world/1","world":"Sk')
-    await buildData({ rootDir: ROOT, dumpsDir: path.join(FIXTURES, 'valid'), outDir, ...quiet })
+    await buildData({ rootDir: ROOT, dumpsDir: path.join(FIXTURES, 'valid'), heightsDir: NO_HEIGHTS, outDir, ...quiet })
     expect((await readdir(outDir)).sort()).toEqual(['index.json', ...SLUGS.map((s) => `${s}.json`)].sort())
     expect(await readJson(outDir, 'prime.json')).toMatchObject({ format: 'pcmap-world/1', world: 'Prime' })
   })
@@ -302,7 +302,7 @@ describe('buildData changes and failures', () => {
       'skeo.json': '{"format":"pcmap-worlds/1"}',
     }
     for (const [f, text] of Object.entries(files)) await writeFile(path.join(outDir, f), text)
-    const e = await failure(buildData({ rootDir: ROOT, dumpsDir: path.join(FIXTURES, 'valid'), outDir, ...quiet }))
+    const e = await failure(buildData({ rootDir: ROOT, dumpsDir: path.join(FIXTURES, 'valid'), heightsDir: NO_HEIGHTS, outDir, ...quiet }))
     expect(e.errors).toEqual([`output directory ${outDir}: refusing to delete it: it holds entries build-data does not ` +
       'write (humble.json, notes.json, prime.json, ...); some are pcmap-dump/1 dumps; choose another --out'])
     for (const [f, text] of Object.entries(files)) expect(await readFile(path.join(outDir, f), 'utf8')).toBe(text)
@@ -313,7 +313,7 @@ describe('buildData changes and failures', () => {
     await mkdir(path.join(outDir, 'sub'), { recursive: true })
     await writeFile(path.join(outDir, 'main.js'), '// precious')
     await writeFile(path.join(outDir, 'package.json'), '{"name":"precious"}')
-    const e = await failure(buildData({ rootDir: ROOT, dumpsDir: path.join(FIXTURES, 'valid'), outDir, ...quiet }))
+    const e = await failure(buildData({ rootDir: ROOT, dumpsDir: path.join(FIXTURES, 'valid'), heightsDir: NO_HEIGHTS, outDir, ...quiet }))
     expect(e.errors).toEqual([expect.stringMatching(
       /refusing to delete it: it holds entries build-data does not write \(main\.js, package\.json, sub\); empty it/)])
     expect(await readFile(path.join(outDir, 'main.js'), 'utf8')).toBe('// precious')
@@ -325,7 +325,7 @@ describe('buildData changes and failures', () => {
     const dump = path.join(outDir, 'Prime-20261104-201500.json')
     await cp(path.join(FIXTURES, 'valid', 'Prime', '01-dumper.json'), dump)
     const before = await readFile(dump)
-    const e = await failure(buildData({ rootDir: ROOT, dumpsDir: path.join(FIXTURES, 'valid'), outDir, ...quiet }))
+    const e = await failure(buildData({ rootDir: ROOT, dumpsDir: path.join(FIXTURES, 'valid'), heightsDir: NO_HEIGHTS, outDir, ...quiet }))
     expect(e.errors).toEqual([expect.stringMatching(
       /\(Prime-20261104-201500\.json\); some are pcmap-dump\/1 dumps; choose another --out$/)])
     expect(await readdir(outDir)).toEqual(['Prime-20261104-201500.json'])
@@ -449,7 +449,7 @@ describe('CLI', () => {
 
   it('builds with --dumps/--out and prints nothing with --quiet', async () => {
     const out = path.join(await tmp(), 'out')
-    const r = run('--dumps', path.join(FIXTURES, 'valid'), '--out', out, '--quiet')
+    const r = run('--dumps', path.join(FIXTURES, 'valid'), '--heights', NO_HEIGHTS, '--out', out, '--quiet')
     expect(r.stderr).toBe('')
     expect(r.stdout).toBe('')
     expect(r.status).toBe(0)
@@ -458,7 +458,7 @@ describe('CLI', () => {
 
   it('prints the report and honours --include-runtime', async () => {
     const out = path.join(await tmp(), 'out')
-    const r = run(`--dumps=${path.join(FIXTURES, 'valid')}`, `--out=${out}`, '--include-runtime')
+    const r = run(`--dumps=${path.join(FIXTURES, 'valid')}`, `--heights=${NO_HEIGHTS}`, `--out=${out}`, '--include-runtime')
     expect(r.status).toBe(0)
     expect(r.stdout).toMatch(/Prime +7 point\(s\)/)
   })
@@ -492,6 +492,10 @@ describe('CLI', () => {
     expect(r.status).toBe(0)
     const index = await readJson(out, 'index.json')
     expect(index.worlds.map((w) => w.file)).toEqual(SLUGS.map((s) => `${s}.json`))
+    // Worlds with a committed heightmap get a relief image.
+    for (const w of index.worlds.filter((w) => w.basemap)) {
+      expect(await readdir(path.join(out, 'basemaps'))).toContain(w.basemap.url.slice('data/basemaps/'.length))
+    }
   })
 })
 
