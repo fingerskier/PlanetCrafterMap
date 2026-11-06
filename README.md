@@ -26,8 +26,8 @@ interactive maps are proprietary compilations and must not be copied. So this re
    planet and dumps each developer-placed scene object (`id`, `gId`, position) to
    `<GameDir>/BepInEx/config/pcmap-dumps/<Planet>-<timestamp>.json` (`pcmap-dump/1`). Use a fresh throwaway
    save with *randomize mineables* off, and set `HideManagerGameObject = true` in `BepInEx.cfg`. See
-   [`tools/dumper/README.md`](tools/dumper/README.md). The plugin has **not been compiled or run yet**, so
-   expect a first-build fix or two.
+   [`tools/dumper/README.md`](tools/dumper/README.md). It works on game 2.104 (tested on Prime,
+   Steam/Proton); on Proton add the launch option `WINEDLLOVERRIDES="winhttp=n,b" %command%`.
 2. Drop the file into `data/dumps/<WorldId>/` (see [`data/dumps/README.md`](data/dumps/README.md)).
 3. `npm run data` validates, de-duplicates, classifies (`data/categories.json`) and writes `public/data/`.
    The build runs this step every time, so the published JSON is always derived from the committed sources.

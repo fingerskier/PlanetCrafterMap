@@ -4,14 +4,14 @@ A BepInEx 5 (Mono) plugin for *The Planet Crafter*. It writes the current planet
 scene objects** (ores, crates, wreck props, collectibles, …) to a [`pcmap-dump/1`](../../docs/ARCHITECTURE.md#dump-pcmap-dump1-pipeline-input-also-importable-in-the-browser)
 JSON file. The map's published data is **generated** this way, because no openly licensed POI dataset exists.
 
-> [!WARNING]
-> **STATUS: untested.** This code has **never been compiled or run** in this repository's CI. Building it
-> needs the game's proprietary DLLs, which are not in the repo, and the build machine had no .NET SDK.
-> Every game API it calls was checked against published mod source code (see
-> [API verification](#api-verification)), but the plugin as a whole has not been tested in-game. Expect to fix
-> small compile errors on the first build. Please report them, or send a PR. The only thing CI runs here is
-> `tools/dumper/dumper.test.js`, a Node check that the hand-synced constants and the documented output shape
-> agree with `docs/ARCHITECTURE.md` and `src/lib/planets.js`.
+> [!NOTE]
+> **STATUS: works.** Built with the .NET 8 SDK and run in game 2.104 (Steam via Proton on Linux, BepInEx 5.4.23.6)
+> on 2026-11-06. It dumped Prime in one go: 66 sectors found, 63 loaded, 2 already loaded, 1 "failed" (`3D`, an
+> object that carries a `Sector` component but is not a scene; Unity logs *Scene '3D' couldn't be loaded*,
+> which is harmless), 27,090 objects across 55 gIds. The code compiled without changes. CI still cannot build it,
+> because building needs the game's proprietary DLLs. CI only runs `tools/dumper/dumper.test.js`, a Node check
+> that the hand-synced constants and the documented output shape agree with `docs/ARCHITECTURE.md` and
+> `src/lib/planets.js`.
 
 ## What it does
 
@@ -60,13 +60,16 @@ dotnet build tools/dumper/PCMapDumper.csproj -c Release -p:GameDir="C:\Program F
 - If the compiler reports `CS0012: The type 'X' is defined in an assembly that is not referenced`, add a
   `<Reference>` for the named DLL from `Managed/` to `PCMapDumper.csproj`, following the existing entries.
 - On Linux or macOS (for example, a Proton install), file names are case-sensitive. Check that the `HintPath` names
-  match the files in `Managed/`.
+  match the files in `Managed/`. They do for game 2.104.
+- Linux without a system SDK: `curl -fsSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel 8.0 --install-dir ~/.dotnet`,
+  then build with `DOTNET_ROOT=~/.dotnet ~/.dotnet/dotnet build … -p:GameDir="$HOME/.local/share/Steam/steamapps/common/The Planet Crafter"`.
 
 ## Install
 
 Copy `PCMapDumper.dll` to `<GameDir>/BepInEx/plugins/PCMapDumper/`. In `<GameDir>/BepInEx/config/BepInEx.cfg`,
 set `HideManagerGameObject = true` under `[Chainloader]` (see [Requirements](#requirements)). Start the game once.
-That creates `BepInEx/config/planetcraftermap.pcmapdumper.cfg`. The log should show
+On Proton (Linux / Steam Deck), unzip the **win_x64** BepInEx build and set the game's Steam launch option to
+`WINEDLLOVERRIDES="winhttp=n,b" %command%`, or Wine ignores BepInEx's `winhttp.dll`. Starting the game creates `BepInEx/config/planetcraftermap.pcmapdumper.cfg`. The log should show
 `PCMap Dumper <version> loaded. Dump key: Ctrl+Shift+<Keyboard>/f9. Output: <folder>` and no `HideManagerGameObject` warning.
 
 ## Usage (recommended procedure)
@@ -143,7 +146,7 @@ You can also load a dump straight into the web app (Import button) to view it lo
 
 ## Limitations
 
-- **Untested** (see STATUS). Sector-loading behaviour, timings and counts have not been observed in-game.
+- Tested on Prime only so far (see STATUS). The other worlds have not been dumped yet.
 - Only `WorldObjectFromScene` objects are dumped. Scene props that carry only an `Action*` component (for example
   `ActionMinable`) and no `WorldObjectFromScene` are not included. Ore veins, caves, lakes and other terrain
   features are not covered either. The scan in `Plugin.Scan()` is the extension point for adding more sources.

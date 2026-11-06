@@ -22,7 +22,7 @@ export function fixtureDump(rel) {
 
 /**
  * Serve a fixture dump as Prime's PUBLISHED data (index.json + prime.json), run through the same pipeline
- * functions as scripts/build-data.mjs. The real build publishes no points, so this is the only way to
+ * functions as scripts/build-data.mjs. The e2e build publishes no points (playwright.config.js builds from an empty dumps folder), so this is the only way to
  * exercise the published layers. Needs `serviceWorkers: 'block'`: page.route() cannot see requests the
  * service worker answers.
  * @param {Page} page
