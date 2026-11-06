@@ -9,8 +9,10 @@ Toxicity, Skeo). It is a minimal-UI PWA that works offline once loaded, and it i
 
 - **Browse resource locations** (ores, veins, crates, wreck loot, collectibles, larvae/eggs, …) per world,
   toggle categories, search them, and click a point for its in-game `X:Y:Z` (the HUD format).
-- **Import your own save** (Steam `…\AppData\LocalLow\MijuGames\Planet Crafter\*.json`, or a Game Pass blob).
-  It is parsed **in your browser and never uploaded**. You see your base, placed objects, procedural-wreck sites
+- **Import your own save** (Steam `…\AppData\LocalLow\MijuGames\Planet Crafter\*.json`; on Linux with Proton,
+  `~/.local/share/Steam/steamapps/compatdata/1284190/pfx/drive_c/users/steamuser/AppData/LocalLow/MijuGames/Planet Crafter/`;
+  or a Game Pass blob). It is parsed **in your browser and never uploaded**, and remembered on that device until you
+  clear it. In Chrome/Edge, **Refresh save** re-reads the file the game keeps writing, so you import it only once. You see your base, placed objects, procedural-wreck sites
   and players on the right world, and published points you've already **collected** get dimmed or hidden.
 - **Import a dump** (`pcmap-dump/1` JSON or CSV) to view data you generated yourself, without publishing it.
 - **Share a view**: the URL hash holds the world, view, layers and pin.

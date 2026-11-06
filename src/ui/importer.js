@@ -6,7 +6,7 @@ import { buildSaveOverlay, decodeSaveBytes, isSaveText, parseSave } from '../lib
 /**
  * @typedef {import('../lib/save.js').SaveOverlay} SaveOverlay
  * @typedef {import('../lib/dump.js').DumpObject} DumpObject
- * @typedef {{ kind: 'save', name: string, overlay: SaveOverlay }} SaveImport
+ * @typedef {{ kind: 'save', name: string, overlay: SaveOverlay, bytes: ArrayBuffer }} SaveImport the bytes as read, to remember
  * @typedef {{ kind: 'dump', name: string, planet: string, source: string|null, gameVersion: string|null,
  *   objects: DumpObject[], duplicates: number, warnings: string[] }} DumpImport
  * @typedef {{ kind: 'error', name: string, errors: string[], warnings: string[] }} ImportError
@@ -24,8 +24,11 @@ export async function importFile(file, { worldIds, defaultPlanet }) {
   const fail = (/** @type {string[]} */ errors, /** @type {string[]} */ warnings = []) =>
     /** @type {ImportError} */ ({ kind: 'error', name, errors, warnings })
   let text
+  /** @type {ArrayBuffer} */
+  let bytes
   try {
-    text = decodeSaveBytes(await file.arrayBuffer())
+    bytes = await file.arrayBuffer()
+    text = decodeSaveBytes(bytes)
   } catch (e) {
     return fail([`${name}: ${errorMessage(e)}`])
   }
@@ -33,7 +36,7 @@ export async function importFile(file, { worldIds, defaultPlanet }) {
   if (isSaveText(text)) {
     try {
       const parsed = parseSave(text)
-      return { kind: 'save', name, overlay: buildSaveOverlay(parsed, worldIds) }
+      return { kind: 'save', name, overlay: buildSaveOverlay(parsed, worldIds), bytes }
     } catch (e) {
       return fail([`${name} looks like a save file but could not be read: ${errorMessage(e)}`])
     }

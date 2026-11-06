@@ -1,7 +1,7 @@
 // New versions. The service worker calls skipWaiting() + clients.claim(), so after a deploy it takes over a
 // page that still runs the previous shell and index.json, while world files now come from the new precache.
-// Such a page reloads into the new version, unless it holds imported files (they live only in memory and a
-// reload drops them): then it shows a "Map updated" notice with a Reload button. At most one automatic
+// Such a page reloads into the new version, unless it holds imported files that live only in memory (a dump,
+// or a save the browser could not remember) and a reload would drop: then it shows a "Map updated" notice with a Reload button. At most one automatic
 // reload per tab session (sessionStorage), so a mismatch a reload cannot fix never loops.
 
 import { h } from './dom.js'

@@ -158,10 +158,18 @@ The client never sends imported files anywhere. Parsing happens in the page.
   - Save: player positions, placed objects (built / wreck / scene), procedural-wreck instances, and
     **collected scene ids**, which dim or hide published points with the same stable id.
   - Dump: a local layer rendered like published data.
+- The last imported **save** is remembered on the device (`src/ui/save-store.js`, IndexedDB `pcmap` / `kv` /
+  `save`: `{ name, bytes, savedAt, handle }`) and restored on the next visit, without switching worlds.
+  "Clear imported data" forgets it. Dumps are not remembered.
+- Where `showOpenFilePicker` exists (Chromium), a trusted click on the import input opens that picker instead
+  and the `FileSystemFileHandle` is stored with the save. `[data-testid=refresh-save]` ("Refresh save") re-reads
+  the file through it (asking for read permission again if needed); on restore the live file is read silently
+  when permission is still granted, else the stored copy is used. Without a handle the button opens the file
+  input ("Re-import save…"). A remembered save that no longer parses is forgotten with a message.
 - Test hooks: the `data-testid` attributes listed in `e2e/`, plus `window.__pcmap` (read-only debug handle).
 
 ## Deploy
 
 `BASE_PATH` sets Vite's `base`. CI takes it from `actions/configure-pages` (`base_path`), so custom domains work.
 The PWA uses `vite-plugin-pwa` (generateSW). The app shell and `data/*.json` are precached, so after the first visit the app works offline.
-After a deploy the new worker takes over open pages (`skipWaiting` + `clientsClaim`). A page still running the previous build (a `controllerchange` on a page that was controlled at startup, or a `rev` mismatch) reloads once per tab session; with imported files loaded it shows a "Map updated" notice with a Reload button instead.
+After a deploy the new worker takes over open pages (`skipWaiting` + `clientsClaim`). A page still running the previous build (a `controllerchange` on a page that was controlled at startup, or a `rev` mismatch) reloads once per tab session; with a dump loaded (or a save the browser could not store) it shows a "Map updated" notice with a Reload button instead.

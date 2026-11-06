@@ -64,7 +64,8 @@
             <label class="file-label" for="import">Import a save or a dump (.json / .csv)</label>
             <input id="import" class="file" data-testid="import" type="file"
               accept=".json,.csv,.txt,application/json,text/csv,text/plain" aria-describedby="import-help" />
-            <p class="hint" id="import-help">Read in your browser and never uploaded.</p>
+            <p class="hint" id="import-help">Read in your browser and never uploaded. Your last save is remembered on
+              this device until you clear it.</p>
             <p class="meta" id="import-status" aria-live="polite"></p>
             <div class="error" id="import-error" data-testid="import-error" role="alert" hidden></div>
             <div id="overlay-box" class="overlay-box" hidden>
@@ -76,6 +77,7 @@
               <div id="save-section" class="subsection" hidden>
                 <h3 class="label">Your save</h3>
                 <div id="save-layers" class="toggle-list"></div>
+                <button type="button" class="btn" data-testid="refresh-save" id="refresh-save">Refresh save</button>
               </div>
               <div id="dump-section" class="subsection" hidden>
                 <h3 class="label">Your dump</h3>
@@ -107,7 +109,8 @@
         <h2 id="empty-title">No published points for <span id="empty-world">this world</span> yet</h2>
         <p>
           You can still use the map: <strong>import your save</strong> (Steam:
-          <code>%USERPROFILE%\AppData\LocalLow\MijuGames\Planet Crafter\</code>) to see your bases, wrecks and
+          <code>%USERPROFILE%\AppData\LocalLow\MijuGames\Planet Crafter\</code>; on Linux with Proton, the same
+          folder under <code>~/.local/share/Steam/steamapps/compatdata/1284190/pfx/drive_c/users/steamuser/</code>) to see your bases, wrecks and
           players, or <strong>import a dump</strong> (<code>pcmap-dump/1</code> JSON or CSV). Files stay on your device.
         </p>
         <p>
