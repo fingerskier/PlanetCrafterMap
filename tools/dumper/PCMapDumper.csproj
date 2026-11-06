@@ -66,6 +66,10 @@
       <HintPath>$(GameManaged)UnityEngine.PhysicsModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="UnityEngine.TerrainModule">
+      <HintPath>$(GameManaged)UnityEngine.TerrainModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
     <Reference Include="Unity.InputSystem">
       <HintPath>$(GameManaged)Unity.InputSystem.dll</HintPath>
       <Private>false</Private>

@@ -79,7 +79,9 @@ On Proton (Linux / Steam Deck), unzip the **win_x64** BepInEx build and set the 
    collected may be missing from the scene. With randomization on, ore *types* differ from vanilla.
 2. Once you are in the world, press **Ctrl+Shift+F9** (or your configured hotkey). The game may freeze for a while
    as every sector loads. If nothing happens at all (no HUD text, no log line), check `HideManagerGameObject`.
-3. Wait for the HUD or the log line `PCMap dump written: …`.
+3. Wait for the HUD or the log line `PCMap dump written: …`. With `Heights.Enabled` (the default) it then samples the
+   ground height (see [Heights](#heights-pcmap-heights1)); wait for `PCMap heights written: …` too. The game may
+   stutter while it samples.
 4. **Quit to desktop without saving** and restart the game before you play again.
 5. Repeat for each planet. Each dump covers only the planet you are on.
 
@@ -104,6 +106,9 @@ Example log output:
 | Dump | `IncludeInactive` | `true` | Include inactive scene objects. |
 | Dump | `SkipProceduralInstances` | `true` | Skip objects inside procedural wreck instances. |
 | Output | `Directory` | *(empty)* | Output folder. Empty means `<BepInEx config dir>/pcmap-dumps`. Environment variables are expanded. |
+| Heights | `Enabled` | `true` | After the dump, sample ground heights and write `<Planet>-<time>.heights.gz`. |
+| Heights | `Step` | `4` | Grid spacing in metres (0.5–64). |
+| Heights | `MaxCells` | `4000000` | Cell budget; the step doubles until the grid fits. |
 
 ## Output format
 
@@ -132,6 +137,17 @@ The values below are **synthetic** and show only the shape:
   filter them out. The pipeline decides what to do with them.
 - `gId` is `GetGroupData().id` exactly as the game spells it, including the game's own misspellings.
 - `pos` is `transform.position` as `[x, y, z]`, rounded to 0.01. Unity's axes are Y-up, so the map plane is X/Z.
+
+## Heights (`pcmap-heights/1`)
+
+After the object dump, the plugin samples a regular X/Z grid over the union of the planet's Unity `Terrain`s
+(or the dumped objects' extent, if there are none) and writes `<Planet>-<yyyyMMdd-HHmmss>.heights.gz` next to the
+dump. Each cell stores two heights: `terrain`, the highest `Terrain` under the cell centre (inactive ones included,
+via `terrainData.GetInterpolatedHeight`), and `surface`, where a ray cast straight down first hits a collider
+(triggers ignored), which adds cliffs and rock meshes the terrain lacks. Only numbers are written, no textures or
+images. The map's build renders a shaded relief from them. The layout is in
+[`docs/ARCHITECTURE.md`](../../docs/ARCHITECTURE.md#heightmap-pcmap-heights1-pipeline-input). Copy the file to
+`data/heights/<WorldId>/`.
 
 ## Feeding the pipeline
 

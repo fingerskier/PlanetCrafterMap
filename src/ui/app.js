@@ -198,7 +198,8 @@ export async function startApp({ baseUrl }) {
   })
   L.control.zoom({ position: 'bottomright' }).addTo(map)
   map.attributionControl.setPrefix('<a href="https://leafletjs.com" target="_blank" rel="noopener">Leaflet</a>')
-  map.createPane('basemapImage').style.zIndex = '250'
+  // Below the tile pane (200), where the grid draws its lines over the relief image.
+  map.createPane('basemapImage').style.zIndex = '150'
   /** @type {L.GridLayer|null} */
   let grid = null
   /** @type {L.ImageOverlay|null} */
@@ -444,12 +445,13 @@ export async function startApp({ baseUrl }) {
 
   function renderBasemap() {
     const world = /** @type {IndexWorld} */ (app.world)
+    const hasImage = world.basemap?.type === 'image' && typeof world.basemap.url === 'string'
     grid?.remove()
-    grid = new GridBasemap({ frame: world.frame })
+    grid = new GridBasemap({ frame: world.frame, overlay: hasImage })
     grid.addTo(map)
     image?.remove()
     image = null
-    if (world.basemap?.type === 'image' && typeof world.basemap.url === 'string') {
+    if (hasImage && world.basemap) {
       image = L.imageOverlay(`${baseUrl}${world.basemap.url.replace(/^\/+/, '')}`, frameToBounds(world.basemap.bounds), {
         pane: 'basemapImage', interactive: false, alt: '',
       }).addTo(map)

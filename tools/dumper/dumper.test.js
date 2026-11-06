@@ -3,10 +3,12 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
+import { HEIGHTS_FORMAT, NODATA } from '../../src/lib/heights.js'
 import { RUNTIME_ID_MIN, SCENE_ID_MIN, isSceneId } from '../../src/lib/planets.js'
 
 const read = (name) => readFileSync(fileURLToPath(new URL(name, import.meta.url)), 'utf8')
 const plugin = read('./Plugin.cs')
+const heights = read('./Heights.cs')
 const csproj = read('./PCMapDumper.csproj')
 const readme = read('./README.md')
 
@@ -78,5 +80,18 @@ describe('tools/dumper', () => {
       expect(o.pos).toHaveLength(3)
       for (const v of o.pos) expect(Math.round(v * 100) / 100).toBe(v)
     }
+  })
+
+  it('writes the pcmap-heights/1 layout that src/lib/heights.js reads', () => {
+    expect(heights).toContain(`public const string Format = "${HEIGHTS_FORMAT}";`)
+    expect(heights).toContain('public const short NoData = short.MinValue;')
+    expect(NODATA).toBe(-32768)
+    expect(heights).toContain(`\\"scale\\": 0.1, \\"nodata\\": ${NODATA}, \\"channels\\": [\\"terrain\\", \\"surface\\"]`)
+    const header = heights.slice(heights.indexOf('public static string Header('))
+    const keys = [...header.matchAll(/\\"(\w+)\\": /g)].map((m) => m[1])
+    expect(keys).toEqual(['format', 'planet', 'gameVersion', 'source', 'minX', 'minZ', 'step', 'width', 'height', 'scale', 'nodata', 'channels'])
+    expect(heights).toContain('WriteChannel(gz, r.Terrain);\n                WriteChannel(gz, r.Surface);')
+    expect(plugin).toContain('Heights.Write(')
+    expect(heights).toContain('baseName + ".heights.gz"')
   })
 })

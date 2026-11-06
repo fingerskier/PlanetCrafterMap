@@ -34,7 +34,8 @@ interactive maps are proprietary compilations and must not be copied. So this re
 3. `npm run data` validates, de-duplicates, classifies (`data/categories.json`) and writes `public/data/`.
    The build runs this step every time, so the published JSON is always derived from the committed sources.
 
-The basemap is generated too (a coordinate grid over each world's frame). **No game art, textures or game
+The basemap is generated too: a coordinate grid over each world's frame and, where the dumper's heightmap is
+committed (`data/heights/`), a shaded relief computed from the sampled ground heights. **No game art, textures or game
 text are shipped.** Whether to publish coordinates extracted from the game is the maintainer's call: see
 [Legal](#legal).
 

@@ -86,6 +86,26 @@ All formats carry a `format` tag. Bump the major version on any breaking change.
 - CSV alternative: a header row containing `gId,x,y,z` (with optional `id`, `planet`), in any column order.
 - Dedup key: `id` when present, else `` `${gId}@${round(x)}:${round(y)}:${round(z)}` ``.
 
+### Heightmap (`pcmap-heights/1`): pipeline input
+
+`data/heights/<WorldId>/*.heights.gz`, written by `tools/dumper`. When a world has several, the last in sorted
+order is used. Gzip of one UTF-8 JSON header line, `\n`, then the channels:
+
+```json
+{"format": "pcmap-heights/1", "planet": "Prime", "gameVersion": "2.104", "source": "pcmap-dumper 0.1.0",
+ "minX": -2500, "minZ": -2500, "step": 4, "width": 1251, "height": 1251,
+ "scale": 0.1, "nodata": -32768, "channels": ["terrain", "surface"]}
+```
+
+- Each channel is `width * height` little-endian Int16 values, row-major. Row 0 is at `minZ`, column 0 at `minX`;
+  cell `(c, r)` is the sample at `(minX + c * step, minZ + r * step)`. Value `* scale` = metres; `nodata` = no sample.
+- `terrain` is the Unity Terrain height, `surface` the first collider hit straight down. The relief uses `surface`
+  where present, else `terrain` (`groundGrid` in `src/lib/heights.js`).
+- `build-data` crops the grid to the world's frame grown by 20% on each side (and to the published points), averages it
+  down to at most 2048 px a side, and renders a hillshade (light from the north-west) times a muted height tint
+  to `public/data/basemaps/<slug>-<sha256 12>.png`. That sets the world's `basemap` in `index.json`, unless
+  `worlds.json` configures one. Missing samples are transparent.
+
 ### Generated `public/data/index.json` (`pcmap-index/1`)
 
 ```json
@@ -153,7 +173,9 @@ The client never sends imported files anywhere. Parsing happens in the page.
 
 - Leaflet `CRS.Simple`, canvas renderer, one `circleMarker` per point, one `featureGroup` per category.
 - Hash state is the single source of truth for world, view, enabled layers and pin, so every view is a shareable link.
-- The basemap is a generated canvas `GridLayer` (frame outline plus an adaptive grid). An optional `basemap.image` overlay is drawn when present.
+- The basemap is a generated canvas `GridLayer` (frame outline plus an adaptive grid). When the world has a
+  `basemap` image (the relief), it is drawn in a pane below the grid, and the grid draws its lines only.
+  The service worker caches relief images on first view (`CacheFirst`; their names are content-hashed), not on install.
 - Import (`[data-testid=import]`) auto-detects a save versus a dump:
   - Save: player positions, placed objects (built / wreck / scene), procedural-wreck instances, and
     **collected scene ids**, which dim or hide published points with the same stable id.

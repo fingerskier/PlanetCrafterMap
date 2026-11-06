@@ -45,6 +45,14 @@ export default defineConfig({
       workbox: {
         // The plugin adds manifest.webmanifest itself; globbing it too duplicates the precache entry.
         globPatterns: ['**/*.{js,css,html,svg,png,json}'],
+        // Relief images are large; each is cached the first time its world is shown instead of on install.
+        // Their names carry a content hash, so a cached copy never goes stale.
+        globIgnores: ['**/data/basemaps/**'],
+        runtimeCaching: [{
+          urlPattern: ({ url }) => /\/data\/basemaps\/[^/]+\.png$/.test(url.pathname),
+          handler: 'CacheFirst',
+          options: { cacheName: 'pcmap-basemaps', expiration: { maxEntries: 12 } },
+        }],
         maximumFileSizeToCacheInBytes: 8 * 1024 * 1024,
         cleanupOutdatedCaches: true,
         // registerType 'autoUpdate' only sets these when injectRegister is 'auto'; with 'script' they must be

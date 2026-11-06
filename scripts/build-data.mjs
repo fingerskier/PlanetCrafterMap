@@ -1,10 +1,11 @@
 #!/usr/bin/env node
-// Data pipeline: data/worlds.json + data/categories.json + data/dumps/** -> public/data/
+// Data pipeline: data/worlds.json + data/categories.json + data/dumps/** + data/heights/** -> public/data/
 //
-//   node scripts/build-data.mjs [--dumps <dir>] [--out <dir>] [--include-runtime] [--quiet]
+//   node scripts/build-data.mjs [--dumps <dir>] [--heights <dir>] [--out <dir>] [--include-runtime] [--quiet]
 //
 // Validates every source, merges and de-duplicates the dumps per world, and writes index.json
 // (pcmap-index/1) plus one <slug>.json (pcmap-world/1) per world, including worlds with no data.
+// A world with a heightmap also gets basemaps/<slug>-<hash>.png, a shaded relief rendered from it.
 // Nothing is written when any error is found. Output is byte-deterministic for the same inputs.
 // Formats: docs/ARCHITECTURE.md.
 
@@ -17,6 +18,7 @@ import { parseArgs } from 'node:util'
 import { OTHER_ID, compileCategories } from '../src/lib/categories.js'
 import { DUMP_FORMAT, mergeDumps, parseDumpText, toWorldData, validateDump } from '../src/lib/dump.js'
 import { RUNTIME_ID_MIN, planetHash } from '../src/lib/planets.js'
+import { readHeightsFile, renderBasemap } from './basemap.mjs'
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const WORLDS_FORMAT = 'pcmap-worlds/1'
@@ -26,6 +28,10 @@ const ACCESS = ['base', 'dlc', 'free-update']
 const WORLD_ID_RE = /^[A-Za-z][A-Za-z0-9]*$/
 const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 const DUMP_EXT_RE = /\.(json|csv)$/i
+const HEIGHTS_EXT_RE = /\.heights\.gz$/i
+const BASEMAP_DIR = 'basemaps'
+/** The relief is cropped to the world's frame grown by this fraction on each side (and to the points). */
+const BASEMAP_MARGIN = 0.2
 // OS metadata files that may appear in the output directory; deleting them loses nothing.
 const OS_JUNK_RE = /^(\.DS_Store|\._.+|Thumbs\.db|desktop\.ini)$/i
 // What build-data writes, in any version, so a format bump can rebuild over older output.
@@ -138,9 +144,10 @@ export function revOf(worldDataWithoutRev) {
  * @param {(line: string) => void} [opts.log] report sink (default console.log)
  * @returns {Promise<BuildResult>}
  */
-export async function buildData({ rootDir = REPO_ROOT, dumpsDir, outDir, includeRuntime = false, log = console.log } = {}) {
+export async function buildData({ rootDir = REPO_ROOT, dumpsDir, heightsDir, outDir, includeRuntime = false, log = console.log } = {}) {
   rootDir = path.resolve(rootDir)
   const dumpsAbs = path.resolve(rootDir, dumpsDir ?? 'data/dumps')
+  const heightsAbs = path.resolve(rootDir, heightsDir ?? 'data/heights')
   const outAbs = path.resolve(rootDir, outDir ?? 'public/data')
   const show = (/** @type {string} */ p) => {
     const r = path.relative(rootDir, p)
@@ -172,7 +179,7 @@ export async function buildData({ rootDir = REPO_ROOT, dumpsDir, outDir, include
       errors.push(`data/categories.json: ${/** @type {Error} */ (e).message}`)
     }
   }
-  const outProblem = checkOutDir(outAbs, rootDir, dumpsAbs) ??
+  const outProblem = checkOutDir(outAbs, rootDir, dumpsAbs) ?? checkOutDir(outAbs, rootDir, heightsAbs, 'heights') ??
     (await checkOutDirContents(outAbs, worlds.map((w) => w.slug)))
   if (outProblem) errors.push(`output directory ${outAbs}: ${outProblem}`)
 
@@ -223,14 +230,46 @@ export async function buildData({ rootDir = REPO_ROOT, dumpsDir, outDir, include
       bucket.push({ file, dump })
     }
   }
+  // 2b. Heightmaps: data/heights/<WorldId>/*.heights.gz, the last in sorted order per world.
+  /** @type {Map<string, { file: string, heights: import('../src/lib/heights.js').Heights }>} */
+  const heightsByWorld = new Map()
+  if (worlds.length) {
+    const hfiles = await listHeightsFiles(heightsAbs, { explicit: heightsDir !== undefined, errors, warnings, show })
+    for (const relPath of hfiles) {
+      const abs = path.join(heightsAbs, ...relPath.split('/'))
+      const file = show(abs)
+      const segments = relPath.split('/')
+      const folderWorld = segments.length === 2 ? worldById.get(segments[0]) : undefined
+      if (!folderWorld) {
+        errors.push(`${file}: heightmaps go in data/heights/<WorldId>/ (one of ${worlds.map((w) => w.id).join(', ')})`)
+        continue
+      }
+      let heights
+      try {
+        heights = await readHeightsFile(abs)
+      } catch (e) {
+        errors.push(`${file}: ${/** @type {Error} */ (e).message}`)
+        continue
+      }
+      if (heights.header.planet !== folderWorld.id) {
+        errors.push(`${file}: planet '${heights.header.planet}' does not match its folder '${segments[0]}'`)
+        continue
+      }
+      const prev = heightsByWorld.get(folderWorld.id)
+      if (prev) warnings.push(`${folderWorld.id}: several heightmaps; using ${file}, not ${prev.file}`)
+      heightsByWorld.set(folderWorld.id, { file, heights })
+    }
+  }
   if (errors.length || !taxonomy) throw new BuildDataError(errors, warnings)
 
   // 3. Merge and publish per world.
   /** @type {WorldReport[]} */
   const reports = []
-  /** @type {{ file: string, text: string }[]} */
+  /** @type {{ file: string, text: string|Buffer }[]} */
   const outputs = []
   const indexWorlds = []
+  /** @type {string[]} */
+  const basemapReports = []
   for (const w of worlds) {
     const entries = /** @type {{ file: string, dump: any }[]} */ (perWorld.get(w.id))
     const merged = mergeDumps(entries.map((e) => e.dump), { planet: w.id, names: entries.map((e) => e.file) })
@@ -260,6 +299,33 @@ export async function buildData({ rootDir = REPO_ROOT, dumpsDir, outDir, include
       runtimeExcluded,
       unknownGids: [...unknown].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)),
     })
+    const extent = extentOf(data.points)
+    /** @type {Basemap|null} */
+    let basemap = w.basemap ?? null
+    const hm = heightsByWorld.get(w.id)
+    if (hm && !basemap) {
+      const [x0, z0, x1, z1] = w.frame
+      const mx = (x1 - x0) * BASEMAP_MARGIN
+      const mz = (z1 - z0) * BASEMAP_MARGIN
+      /** @type {Frame} */
+      const crop = [x0 - mx, z0 - mz, x1 + mx, z1 + mz]
+      if (extent) {
+        crop[0] = Math.min(crop[0], extent[0] - 100)
+        crop[1] = Math.min(crop[1], extent[1] - 100)
+        crop[2] = Math.max(crop[2], extent[2] + 100)
+        crop[3] = Math.max(crop[3], extent[3] + 100)
+      }
+      try {
+        const img = renderBasemap(hm.heights, { frame: crop })
+        const file = `${BASEMAP_DIR}/${w.slug}-${img.hash}.png`
+        outputs.push({ file, text: img.png })
+        basemap = { type: 'image', url: `data/${file}`, bounds: img.bounds }
+        basemapReports.push(`${w.id}: ${file} ${img.width}x${img.height} px at ${img.step} m, ` +
+          `${(img.png.length / 1024).toFixed(0)} KiB, heights ${img.range[0].toFixed(0)}..${img.range[1].toFixed(0)} m from ${hm.file}`)
+      } catch (e) {
+        throw new BuildDataError([`${hm.file}: ${/** @type {Error} */ (e).message}`], warnings)
+      }
+    }
     indexWorlds.push({
       id: w.id,
       slug: w.slug,
@@ -268,11 +334,11 @@ export async function buildData({ rootDir = REPO_ROOT, dumpsDir, outDir, include
       access: w.access,
       hash: w.hash,
       frame: w.frame,
-      extent: extentOf(data.points),
+      extent,
       count: data.points.length,
       file,
       rev,
-      basemap: w.basemap ?? null,
+      basemap,
     })
   }
   const index = { format: INDEX_FORMAT, worlds: indexWorlds, groups: taxonomy.groups, categories: taxonomy.categories }
@@ -281,7 +347,8 @@ export async function buildData({ rootDir = REPO_ROOT, dumpsDir, outDir, include
   await rm(outAbs, { recursive: true, force: true })
   await mkdir(outAbs, { recursive: true })
   await writeFile(path.join(outAbs, 'index.json'), JSON.stringify(index, null, 2) + '\n')
-  for (const o of outputs) await writeFile(path.join(outAbs, o.file), o.text)
+  if (basemapReports.length) await mkdir(path.join(outAbs, BASEMAP_DIR), { recursive: true })
+  for (const o of outputs) await writeFile(path.join(outAbs, ...o.file.split('/')), o.text)
 
   // 5. Report.
   const pad = Math.max(...worlds.map((w) => w.id.length))
@@ -294,6 +361,7 @@ export async function buildData({ rootDir = REPO_ROOT, dumpsDir, outDir, include
           `${r.runtimeExcluded} runtime excluded]`
         : '  [no dumps]'))
   }
+  for (const line of basemapReports) log(`  basemap ${line}`)
   const unknownWorlds = reports.filter((r) => r.unknownGids.length)
   if (unknownWorlds.length) {
     log("gIds with no category (published under 'other'; add them to data/categories.json):")
@@ -336,18 +404,18 @@ function isPlainRelativeUrl(url) {
 
 /**
  * Refuse output directories whose deletion would destroy sources.
- * @param {string} outAbs @param {string} rootDir @param {string} dumpsAbs
+ * @param {string} outAbs @param {string} rootDir @param {string} dumpsAbs @param {string} [what]
  */
-function checkOutDir(outAbs, rootDir, dumpsAbs) {
+function checkOutDir(outAbs, rootDir, dumpsAbs, what = 'dumps') {
   const contains = (/** @type {string} */ outer, /** @type {string} */ inner) => {
     const r = path.relative(outer, inner)
     return r === '' || (!r.startsWith('..') && !path.isAbsolute(r))
   }
   if (path.parse(outAbs).root === outAbs) return 'refusing to use a file-system root'
   if (contains(outAbs, rootDir)) return 'refusing to delete a directory that contains the project root'
-  if (contains(outAbs, dumpsAbs)) return 'refusing to delete a directory that contains the dumps'
+  if (contains(outAbs, dumpsAbs)) return `refusing to delete a directory that contains the ${what}`
   if (contains(outAbs, path.join(rootDir, 'data'))) return 'refusing to delete the data/ sources'
-  if (contains(dumpsAbs, outAbs)) return 'refusing to delete a directory inside the dumps'
+  if (contains(dumpsAbs, outAbs)) return `refusing to delete a directory inside the ${what}`
   if (contains(path.join(rootDir, 'data'), outAbs)) return 'refusing to delete a directory inside the data/ sources'
   return null
 }
@@ -374,6 +442,7 @@ async function checkOutDirContents(outAbs, slugs) {
   let dumps = false
   for (const e of entries) {
     if (e.isFile() && OS_JUNK_RE.test(e.name)) continue
+    if (e.isDirectory() && e.name === BASEMAP_DIR && (await onlyGeneratedImages(path.join(outAbs, e.name)))) continue
     const format = e.isFile() && /\.json$/i.test(e.name) ? await formatOf(path.join(outAbs, e.name)) : undefined
     if (typeof format === 'string' && OUTPUT_FORMAT_RE.test(format)) continue
     if (format === null && generated.has(e.name)) continue
@@ -385,6 +454,16 @@ async function checkOutDirContents(outAbs, slugs) {
   return `refusing to delete it: it holds entries build-data does not write (${foreign.slice(0, 3).join(', ')}` +
     `${foreign.length > 3 ? ', ...' : ''}); ` +
     (dumps ? `some are ${DUMP_FORMAT} dumps; choose another --out` : 'empty it or choose another --out')
+}
+
+/** @param {string} dir @returns {Promise<boolean>} true when it holds only *.png files and OS metadata */
+async function onlyGeneratedImages(dir) {
+  try {
+    const entries = await readdir(dir, { withFileTypes: true })
+    return entries.every((e) => e.isFile() && (/\.png$/i.test(e.name) || OS_JUNK_RE.test(e.name)))
+  } catch {
+    return false
+  }
 }
 
 /**
@@ -464,6 +543,41 @@ async function listDumpFiles(dir, { explicit, errors, warnings, show }) {
   return out.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
 }
 
+/**
+ * Heightmap files under `dir` (`<WorldId>/*.heights.gz`) as sorted '/'-separated relative paths. A missing
+ * `dir` is fine when it is the default (no world has relief yet) and an error when it was given explicitly.
+ * @param {string} dir
+ * @param {{ explicit: boolean, errors: string[], warnings: string[], show: (p: string) => string }} ctx
+ */
+async function listHeightsFiles(dir, { explicit, errors, warnings, show }) {
+  /** @type {string[]} */
+  const out = []
+  /** @param {string} abs @param {string} rel */
+  const walk = async (abs, rel) => {
+    let entries
+    try {
+      entries = await readdir(abs, { withFileTypes: true })
+    } catch (e) {
+      const code = /** @type {NodeJS.ErrnoException} */ (e).code
+      if (rel === '' && code === 'ENOENT' && !explicit) return
+      if (rel === '' && (code === 'ENOENT' || code === 'ENOTDIR')) {
+        errors.push(`${show(dir)}: heights directory ${code === 'ENOENT' ? 'does not exist' : 'is not a directory'}`)
+        return
+      }
+      throw e
+    }
+    for (const e of entries) {
+      if (e.name.startsWith('.')) continue
+      const childRel = rel ? `${rel}/${e.name}` : e.name
+      if (e.isDirectory()) await walk(path.join(abs, e.name), childRel)
+      else if (e.isFile() && HEIGHTS_EXT_RE.test(e.name)) out.push(childRel)
+      else if (!/\.md$/i.test(e.name)) warnings.push(`${show(path.join(abs, e.name))}: ignored (not a .heights.gz file)`)
+    }
+  }
+  await walk(dir, '')
+  return out.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+}
+
 /** @param {number[][]} points @returns {Frame|null} */
 function extentOf(points) {
   if (!points.length) return null
@@ -486,8 +600,9 @@ const isObject = (v) => typeof v === 'object' && v !== null && !Array.isArray(v)
 // ---------------------------------------------------------------------------------------------
 // CLI
 
-const USAGE = `usage: node scripts/build-data.mjs [--dumps <dir>] [--out <dir>] [--include-runtime] [--quiet]
+const USAGE = `usage: node scripts/build-data.mjs [--dumps <dir>] [--heights <dir>] [--out <dir>] [--include-runtime] [--quiet]
   --dumps <dir>        dump directory (default data/dumps)
+  --heights <dir>      heightmap directory (default data/heights)
   --out <dir>          output directory, deleted and recreated (default public/data)
   --include-runtime    keep objects with id >= ${RUNTIME_ID_MIN} (player builds, wreck contents)
   --quiet, -q          print errors and randomizeMineables alerts only`
@@ -500,6 +615,7 @@ async function main(argv) {
       args: argv,
       options: {
         dumps: { type: 'string' },
+        heights: { type: 'string' },
         out: { type: 'string' },
         'include-runtime': { type: 'boolean', default: false },
         quiet: { type: 'boolean', short: 'q', default: false },
@@ -519,6 +635,7 @@ async function main(argv) {
   try {
     const result = await buildData({
       dumpsDir: values.dumps === undefined ? undefined : path.resolve(values.dumps),
+      heightsDir: values.heights === undefined ? undefined : path.resolve(values.heights),
       outDir: values.out === undefined ? undefined : path.resolve(values.out),
       includeRuntime: values['include-runtime'],
       log: values.quiet ? () => {} : console.log,
