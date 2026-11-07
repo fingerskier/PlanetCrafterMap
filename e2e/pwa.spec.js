@@ -49,6 +49,22 @@ test('the service worker controls the page, and the app boots and loads worlds o
     expect(cached, p).toContain(`${BASE}${p}`)
   }
 
+  // Prime's relief image is not precached: shown before the worker took over, it is fetched again into the
+  // runtime cache once the worker controls the page.
+  const basemap = await page.evaluate(() => /** @type {any} */ (window).__pcmap.index.worlds[0].basemap?.url)
+  expect(basemap).toMatch(/^data\/basemaps\/prime-[0-9a-f]{12}\.png$/)
+  const precached = await page.evaluate(async () => {
+    const out = []
+    for (const key of (await caches.keys()).filter((k) => k.includes('precache'))) {
+      for (const req of await (await caches.open(key)).keys()) out.push(new URL(req.url).pathname)
+    }
+    return out
+  })
+  expect(precached).toContain(`${BASE}data/index.json`)
+  expect(precached).not.toContain(`${BASE}${basemap}`)
+  await expect.poll(() => page.evaluate(async (u) => Boolean(await (await caches.open('pcmap-basemaps')).match(u)),
+    new URL(basemap, page.url()).href)).toBe(true)
+
   await context.setOffline(true)
   // The emulation really cuts the network: an uncached URL fails (and logs its own console error).
   const PROBE = 'e2e-not-cached-'
@@ -59,6 +75,8 @@ test('the service worker controls the page, and the app boots and loads worlds o
   await waitReady(page)
   await expect(page.locator('#fatal')).toBeHidden()
   await expect(page.getByTestId('world-select').locator('option')).toHaveCount(WORLD_SLUGS.length)
+  const relief = page.locator('.leaflet-basemapImage-pane img.leaflet-image-layer')
+  await expect.poll(() => relief.evaluate((el) => /** @type {HTMLImageElement} */ (el).naturalWidth)).toBeGreaterThan(0)
 
   // A world not opened before loads from the precache too.
   const meta = page.locator('#world-meta')

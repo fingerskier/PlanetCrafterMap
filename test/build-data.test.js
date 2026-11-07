@@ -6,9 +6,12 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { BuildDataError, buildData, revOf } from '../scripts/build-data.mjs'
+import { buildHeights } from './fixtures/heights-builder.js'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const FIXTURES = path.join(ROOT, 'test', 'fixtures', 'dumps')
+// Most tests build without relief, so their output does not depend on data/heights.
+const NO_HEIGHTS = path.join(ROOT, 'test', 'fixtures', 'heights', 'empty')
 const SCRIPT = path.join(ROOT, 'scripts', 'build-data.mjs')
 const SLUGS = ['prime', 'humble', 'selenea', 'aqualis', 'toxicity', 'skeo']
 
@@ -23,7 +26,7 @@ afterAll(() => Promise.all(temps.map((d) => rm(d, { recursive: true, force: true
 const quiet = { log: () => {} }
 const build = async (dumpsDir, extra = {}) => {
   const outDir = path.join(await tmp(), 'out')
-  const result = await buildData({ rootDir: ROOT, dumpsDir, outDir, ...quiet, ...extra })
+  const result = await buildData({ rootDir: ROOT, dumpsDir, heightsDir: NO_HEIGHTS, outDir, ...quiet, ...extra })
   return { outDir, result }
 }
 const readJson = async (dir, file) => JSON.parse(await readFile(path.join(dir, file), 'utf8'))
@@ -158,7 +161,7 @@ describe('buildData changes and failures', () => {
     await mkdir(outDir)
     await writeFile(path.join(outDir, 'stale.json'), '{"format":"pcmap-world/1"}')
     for (const junk of ['.DS_Store', '._prime.json', 'Thumbs.db', 'desktop.ini']) await writeFile(path.join(outDir, junk), 'x')
-    await buildData({ rootDir: ROOT, dumpsDir: path.join(FIXTURES, 'valid'), outDir, ...quiet })
+    await buildData({ rootDir: ROOT, dumpsDir: path.join(FIXTURES, 'valid'), heightsDir: NO_HEIGHTS, outDir, ...quiet })
     expect((await readdir(outDir)).sort()).toEqual(['index.json', ...SLUGS.map((s) => `${s}.json`)].sort())
   })
 
@@ -176,7 +179,7 @@ describe('buildData changes and failures', () => {
     await writeFile(path.join(dir, 'a-file'), 'x')
     for (const [name, problem] of [['does-not-exist', 'does not exist'], ['a-file', 'is not a directory']]) {
       const outDir = path.join(dir, 'out')
-      const e = await failure(buildData({ rootDir: ROOT, dumpsDir: path.join(dir, name), outDir, ...quiet }))
+      const e = await failure(buildData({ rootDir: ROOT, dumpsDir: path.join(dir, name), heightsDir: NO_HEIGHTS, outDir, ...quiet }))
       expect(e).toBeInstanceOf(BuildDataError)
       expect(e.errors).toEqual([`${path.join(dir, name)}: dumps directory ${problem}`])
       await expect(readdir(outDir)).rejects.toMatchObject({ code: 'ENOENT' })
@@ -188,7 +191,7 @@ describe('buildData changes and failures', () => {
     await mkdir(outDir)
     const previous = '{"format":"pcmap-world/1","untouched":true}'
     await writeFile(path.join(outDir, 'previous.json'), previous)
-    const e = await failure(buildData({ rootDir: ROOT, dumpsDir: path.join(FIXTURES, 'mismatch'), outDir, ...quiet }))
+    const e = await failure(buildData({ rootDir: ROOT, dumpsDir: path.join(FIXTURES, 'mismatch'), heightsDir: NO_HEIGHTS, outDir, ...quiet }))
     expect(e).toBeInstanceOf(BuildDataError)
     expect(e.errors).toEqual([
       "test/fixtures/dumps/mismatch/Prime/wrong-planet.json: planet 'Humble' does not match its folder 'Prime' (Prime)",
@@ -269,7 +272,7 @@ describe('buildData changes and failures', () => {
     const outDir = path.join(dumps, 'out')
     for (const exists of [false, true]) {
       if (exists) await mkdir(outDir)
-      const e = await failure(buildData({ rootDir: ROOT, dumpsDir: dumps, outDir, ...quiet }))
+      const e = await failure(buildData({ rootDir: ROOT, dumpsDir: dumps, heightsDir: NO_HEIGHTS, outDir, ...quiet }))
       expect(e.errors).toEqual([`output directory ${outDir}: refusing to delete a directory inside the dumps`])
       expect((await readdir(dumps)).sort()).toEqual(exists ? ['Prime', 'out'] : ['Prime'])
       if (exists) expect(await readdir(outDir)).toEqual([])
@@ -284,7 +287,7 @@ describe('buildData changes and failures', () => {
     await writeFile(path.join(outDir, 'future.json'), '{"format":"pcmap-world/12"}')
     await writeFile(path.join(outDir, 'prime.json'), '')
     await writeFile(path.join(outDir, 'skeo.json'), '{"format":"pcmap-world/1","world":"Sk')
-    await buildData({ rootDir: ROOT, dumpsDir: path.join(FIXTURES, 'valid'), outDir, ...quiet })
+    await buildData({ rootDir: ROOT, dumpsDir: path.join(FIXTURES, 'valid'), heightsDir: NO_HEIGHTS, outDir, ...quiet })
     expect((await readdir(outDir)).sort()).toEqual(['index.json', ...SLUGS.map((s) => `${s}.json`)].sort())
     expect(await readJson(outDir, 'prime.json')).toMatchObject({ format: 'pcmap-world/1', world: 'Prime' })
   })
@@ -299,7 +302,7 @@ describe('buildData changes and failures', () => {
       'skeo.json': '{"format":"pcmap-worlds/1"}',
     }
     for (const [f, text] of Object.entries(files)) await writeFile(path.join(outDir, f), text)
-    const e = await failure(buildData({ rootDir: ROOT, dumpsDir: path.join(FIXTURES, 'valid'), outDir, ...quiet }))
+    const e = await failure(buildData({ rootDir: ROOT, dumpsDir: path.join(FIXTURES, 'valid'), heightsDir: NO_HEIGHTS, outDir, ...quiet }))
     expect(e.errors).toEqual([`output directory ${outDir}: refusing to delete it: it holds entries build-data does not ` +
       'write (humble.json, notes.json, prime.json, ...); some are pcmap-dump/1 dumps; choose another --out'])
     for (const [f, text] of Object.entries(files)) expect(await readFile(path.join(outDir, f), 'utf8')).toBe(text)
@@ -310,7 +313,7 @@ describe('buildData changes and failures', () => {
     await mkdir(path.join(outDir, 'sub'), { recursive: true })
     await writeFile(path.join(outDir, 'main.js'), '// precious')
     await writeFile(path.join(outDir, 'package.json'), '{"name":"precious"}')
-    const e = await failure(buildData({ rootDir: ROOT, dumpsDir: path.join(FIXTURES, 'valid'), outDir, ...quiet }))
+    const e = await failure(buildData({ rootDir: ROOT, dumpsDir: path.join(FIXTURES, 'valid'), heightsDir: NO_HEIGHTS, outDir, ...quiet }))
     expect(e.errors).toEqual([expect.stringMatching(
       /refusing to delete it: it holds entries build-data does not write \(main\.js, package\.json, sub\); empty it/)])
     expect(await readFile(path.join(outDir, 'main.js'), 'utf8')).toBe('// precious')
@@ -322,11 +325,122 @@ describe('buildData changes and failures', () => {
     const dump = path.join(outDir, 'Prime-20261104-201500.json')
     await cp(path.join(FIXTURES, 'valid', 'Prime', '01-dumper.json'), dump)
     const before = await readFile(dump)
-    const e = await failure(buildData({ rootDir: ROOT, dumpsDir: path.join(FIXTURES, 'valid'), outDir, ...quiet }))
+    const e = await failure(buildData({ rootDir: ROOT, dumpsDir: path.join(FIXTURES, 'valid'), heightsDir: NO_HEIGHTS, outDir, ...quiet }))
     expect(e.errors).toEqual([expect.stringMatching(
       /\(Prime-20261104-201500\.json\); some are pcmap-dump\/1 dumps; choose another --out$/)])
     expect(await readdir(outDir)).toEqual(['Prime-20261104-201500.json'])
     expect(await readFile(dump)).toEqual(before)
+  })
+})
+
+describe('heightmaps', () => {
+  const heightsDir = async (files) => {
+    const dir = path.join(await tmp(), 'heights')
+    for (const [rel, bytes] of Object.entries(files)) {
+      await mkdir(path.dirname(path.join(dir, rel)), { recursive: true })
+      await writeFile(path.join(dir, rel), bytes)
+    }
+    return dir
+  }
+  const hill = (x, z) => 30 * Math.exp(-((x - 500) ** 2 + (z - 500) ** 2) / 2e5)
+  const prime = () => buildHeights({ minX: -2500, minZ: -2500, step: 50, width: 121, height: 121, terrain: hill })
+
+  it('renders a basemap for a world with a heightmap and points index.json at it', async () => {
+    const dir = await heightsDir({ 'Prime/Prime-1.heights.gz': prime() })
+    const lines = []
+    const { outDir } = await build(path.join(FIXTURES, 'valid'), { heightsDir: dir, log: (l) => lines.push(l) })
+    const index = await readJson(outDir, 'index.json')
+    const bm = index.worlds[0].basemap
+    expect(bm).toMatchObject({ type: 'image', url: expect.stringMatching(/^data\/basemaps\/prime-[0-9a-f]{12}\.png$/) })
+    // Frame [-2000, 3000] grown by 20% = [-3000, 4000], clipped to the grid's [-2500, 3500] cell centres.
+    expect(bm.bounds).toEqual([-2525, -2525, 3525, 3525])
+    expect(index.worlds.slice(1).map((w) => w.basemap)).toEqual([null, null, null, null, null])
+    const png = await readFile(path.join(outDir, bm.url.slice('data/'.length)))
+    expect([...png.subarray(1, 4)].map((c) => String.fromCharCode(c)).join('')).toBe('PNG')
+    expect(await readdir(path.join(outDir, 'basemaps'))).toEqual([path.basename(bm.url)])
+    expect(lines.join('\n')).toMatch(/basemap Prime: basemaps\/prime-[0-9a-f]{12}\.png 121x121 px at 50 m/)
+    // Rebuilding over its own output (a basemaps/ folder included) works and is byte-identical.
+    await buildData({ rootDir: ROOT, dumpsDir: path.join(FIXTURES, 'valid'), heightsDir: dir, outDir, ...quiet })
+    expect(await readFile(path.join(outDir, bm.url.slice('data/'.length)))).toEqual(png)
+  })
+
+  it('uses the last heightmap per world and warns about the others', async () => {
+    const dir = await heightsDir({
+      'Prime/Prime-1.heights.gz': prime(),
+      'Prime/Prime-2.heights.gz': buildHeights({ minX: -2500, minZ: -2500, step: 50, width: 121, height: 121, terrain: () => 1 }),
+    })
+    const { result } = await build(path.join(FIXTURES, 'valid'), { heightsDir: dir })
+    expect(result.warnings).toContainEqual(expect.stringMatching(/Prime: several heightmaps; using .*Prime-2\.heights\.gz/))
+  })
+
+  it('keeps a basemap configured in worlds.json over a heightmap', async () => {
+    const root = await tmp()
+    await mkdir(path.join(root, 'data'))
+    await cp(path.join(ROOT, 'data', 'categories.json'), path.join(root, 'data', 'categories.json'))
+    const worlds = JSON.parse(await readFile(path.join(ROOT, 'data', 'worlds.json'), 'utf8'))
+    worlds.worlds[0].basemap = { type: 'image', url: 'art/prime.png', bounds: [0, 0, 10, 10] }
+    await writeFile(path.join(root, 'data', 'worlds.json'), JSON.stringify(worlds))
+    const dir = await heightsDir({ 'Prime/a.heights.gz': prime() })
+    const outDir = path.join(root, 'out')
+    await buildData({ rootDir: root, heightsDir: dir, outDir, ...quiet })
+    expect((await readJson(outDir, 'index.json')).worlds[0].basemap.url).toBe('art/prime.png')
+    expect(await readdir(outDir)).not.toContain('basemaps')
+  })
+
+  it('fails, writing nothing, on a bad, misplaced or mismatched heightmap', async () => {
+    const dir = await heightsDir({
+      'Prime/broken.heights.gz': Buffer.from('not gzip'),
+      'Humble/wrong.heights.gz': prime(),
+      'loose.heights.gz': prime(),
+      'Prime/notes.txt': 'x',
+    })
+    const outDir = path.join(await tmp(), 'out')
+    const e = await failure(buildData({ rootDir: ROOT, dumpsDir: path.join(FIXTURES, 'valid'), heightsDir: dir, outDir, ...quiet }))
+    expect(e).toBeInstanceOf(BuildDataError)
+    expect(e.errors).toEqual([
+      expect.stringMatching(/Humble\/wrong\.heights\.gz: planet 'Prime' does not match its folder 'Humble'/),
+      expect.stringMatching(/Prime\/broken\.heights\.gz: not a gzip file/),
+      expect.stringMatching(/loose\.heights\.gz: heightmaps go in data\/heights\/<WorldId>\//),
+    ])
+    expect(e.warnings).toContainEqual(expect.stringMatching(/notes\.txt: ignored/))
+    await expect(readdir(outDir)).rejects.toThrow()
+  })
+
+  it('treats a missing default heights directory as no relief, and a missing explicit one as an error', async () => {
+    const root = await tmp()
+    await mkdir(path.join(root, 'data'))
+    for (const f of ['worlds.json', 'categories.json']) await cp(path.join(ROOT, 'data', f), path.join(root, 'data', f))
+    const result = await buildData({ rootDir: root, outDir: path.join(root, 'out'), ...quiet })
+    expect(result.index.worlds.every((w) => w.basemap === null)).toBe(true)
+    const e = await failure(buildData({ rootDir: root, heightsDir: path.join(root, 'typo'), outDir: path.join(root, 'out'), ...quiet }))
+    expect(e.errors).toEqual([expect.stringMatching(/typo: heights directory does not exist/)])
+  })
+
+  it('refuses to delete a basemaps/ folder holding images it did not name', async () => {
+    for (const name of ['survey.png', 'atlantis-0123456789ab.png']) {
+      const outDir = path.join(await tmp(), 'out')
+      await mkdir(path.join(outDir, 'basemaps'), { recursive: true })
+      await writeFile(path.join(outDir, 'basemaps', name), 'x')
+      const e = await failure(buildData({ rootDir: ROOT, dumpsDir: path.join(FIXTURES, 'valid'), heightsDir: NO_HEIGHTS, outDir, ...quiet }))
+      expect(e.errors).toEqual([expect.stringMatching(/holds entries build-data does not write \(basemaps\)/)])
+      expect(await readdir(path.join(outDir, 'basemaps'))).toEqual([name])
+    }
+  })
+
+  it('fails on a heightmap too thin to draw after cropping', async () => {
+    // 2 rows inside the frame: the crop keeps them, scaling down to 2048 px a side would leave none.
+    const thin = buildHeights({ minX: -2000, minZ: 0, step: 1, width: 5001, height: 2, terrain: () => 1 })
+    const dir = await heightsDir({ 'Prime/thin.heights.gz': thin })
+    const e = await failure(build(path.join(FIXTURES, 'valid'), { heightsDir: dir }))
+    expect(e.errors).toEqual([expect.stringMatching(/thin\.heights\.gz: the cropped heightmap is too thin to draw/)])
+  })
+
+  it('refuses an output directory that contains the heights directory', async () => {
+    const root = await tmp()
+    const dir = path.join(root, 'out', 'heights')
+    await mkdir(dir, { recursive: true })
+    const e = await failure(buildData({ rootDir: ROOT, dumpsDir: path.join(FIXTURES, 'valid'), heightsDir: dir, outDir: path.join(root, 'out'), ...quiet }))
+    expect(e.errors).toContainEqual(expect.stringMatching(/contains the heights/))
   })
 })
 
@@ -335,7 +449,7 @@ describe('CLI', () => {
 
   it('builds with --dumps/--out and prints nothing with --quiet', async () => {
     const out = path.join(await tmp(), 'out')
-    const r = run('--dumps', path.join(FIXTURES, 'valid'), '--out', out, '--quiet')
+    const r = run('--dumps', path.join(FIXTURES, 'valid'), '--heights', NO_HEIGHTS, '--out', out, '--quiet')
     expect(r.stderr).toBe('')
     expect(r.stdout).toBe('')
     expect(r.status).toBe(0)
@@ -344,7 +458,7 @@ describe('CLI', () => {
 
   it('prints the report and honours --include-runtime', async () => {
     const out = path.join(await tmp(), 'out')
-    const r = run(`--dumps=${path.join(FIXTURES, 'valid')}`, `--out=${out}`, '--include-runtime')
+    const r = run(`--dumps=${path.join(FIXTURES, 'valid')}`, `--heights=${NO_HEIGHTS}`, `--out=${out}`, '--include-runtime')
     expect(r.status).toBe(0)
     expect(r.stdout).toMatch(/Prime +7 point\(s\)/)
   })
@@ -378,6 +492,10 @@ describe('CLI', () => {
     expect(r.status).toBe(0)
     const index = await readJson(out, 'index.json')
     expect(index.worlds.map((w) => w.file)).toEqual(SLUGS.map((s) => `${s}.json`))
+    // Worlds with a committed heightmap get a relief image.
+    for (const w of index.worlds.filter((w) => w.basemap)) {
+      expect(await readdir(path.join(out, 'basemaps'))).toContain(w.basemap.url.slice('data/basemaps/'.length))
+    }
   })
 })
 

@@ -104,6 +104,14 @@ export async function startApp({ baseUrl }) {
   let holdsImports = () => false
   const outdated = createUpdateHandler({ notice: ui.updateNotice, holdsImports: () => holdsImports() })
   watchControllerChange(navigator.serviceWorker, outdated)
+  // Relief images are runtime-cached by the worker, which only sees requests made while it controls the page.
+  // One shown before that (a first visit) is fetched again once a worker takes over, so it is there offline.
+  /** @type {Set<string>} */
+  const uncachedImages = new Set()
+  navigator.serviceWorker?.addEventListener('controllerchange', () => {
+    for (const url of uncachedImages) fetch(url).catch(() => {})
+    uncachedImages.clear()
+  })
 
   // A bare URL restores the last view (per browser), so reopening the installed app lands where you were.
   if (!location.hash) {
@@ -198,7 +206,8 @@ export async function startApp({ baseUrl }) {
   })
   L.control.zoom({ position: 'bottomright' }).addTo(map)
   map.attributionControl.setPrefix('<a href="https://leafletjs.com" target="_blank" rel="noopener">Leaflet</a>')
-  map.createPane('basemapImage').style.zIndex = '250'
+  // Below the tile pane (200), where the grid draws its lines over the relief image.
+  map.createPane('basemapImage').style.zIndex = '150'
   /** @type {L.GridLayer|null} */
   let grid = null
   /** @type {L.ImageOverlay|null} */
@@ -444,15 +453,18 @@ export async function startApp({ baseUrl }) {
 
   function renderBasemap() {
     const world = /** @type {IndexWorld} */ (app.world)
+    const hasImage = world.basemap?.type === 'image' && typeof world.basemap.url === 'string'
     grid?.remove()
-    grid = new GridBasemap({ frame: world.frame })
+    grid = new GridBasemap({ frame: world.frame, overlay: hasImage })
     grid.addTo(map)
     image?.remove()
     image = null
-    if (world.basemap?.type === 'image' && typeof world.basemap.url === 'string') {
-      image = L.imageOverlay(`${baseUrl}${world.basemap.url.replace(/^\/+/, '')}`, frameToBounds(world.basemap.bounds), {
+    if (hasImage && world.basemap) {
+      const url = `${baseUrl}${world.basemap.url.replace(/^\/+/, '')}`
+      image = L.imageOverlay(url, frameToBounds(world.basemap.bounds), {
         pane: 'basemapImage', interactive: false, alt: '',
       }).addTo(map)
+      if (navigator.serviceWorker && !navigator.serviceWorker.controller) uncachedImages.add(url)
     }
   }
 

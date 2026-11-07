@@ -70,6 +70,9 @@ namespace PCMapDumper
         ConfigEntry<bool> includeInactive;
         ConfigEntry<bool> skipProceduralInstances;
         ConfigEntry<string> outputDirectory;
+        ConfigEntry<bool> heightsEnabled;
+        ConfigEntry<float> heightsStep;
+        ConfigEntry<int> heightsMaxCells;
 
         InputAction dumpAction;
         bool running;
@@ -97,6 +100,15 @@ namespace PCMapDumper
             outputDirectory = Config.Bind("Output", "Directory", "",
                 "Directory for dump files. Empty means <BepInEx config directory>/pcmap-dumps. "
                 + "Environment variables are expanded. A relative path is relative to the game's working directory.");
+
+            heightsEnabled = Config.Bind("Heights", "Enabled", true,
+                "After the object dump, also sample the ground height on a grid and write <Planet>-<time>.heights.gz "
+                + "(pcmap-heights/1), from which the map renders a shaded-relief basemap.");
+            heightsStep = Config.Bind("Heights", "Step", 4f,
+                new ConfigDescription("Grid spacing in metres.", new AcceptableValueRange<float>(0.5f, 64f)));
+            heightsMaxCells = Config.Bind("Heights", "MaxCells", 4_000_000,
+                new ConfigDescription("Upper bound on grid cells; the step doubles until the grid fits.",
+                    new AcceptableValueRange<int>(10_000, 50_000_000)));
 
             BindKey();
             dumpKey.SettingChanged += (_, __) => BindKey();
@@ -241,7 +253,12 @@ namespace PCMapDumper
                     yield break;
                 }
 
-                ScanAndWrite(planet, sectors);
+                string stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
+                var scan = ScanAndWrite(planet, sectors, stamp);
+                if (scan != null && heightsEnabled.Value)
+                {
+                    yield return HeightsRoutine(planet, stamp, scan);
+                }
             }
             finally
             {
@@ -273,7 +290,7 @@ namespace PCMapDumper
             return names;
         }
 
-        void ScanAndWrite(string planet, SectorStats sectors)
+        ScanResult ScanAndWrite(string planet, SectorStats sectors, string stamp)
         {
             try
             {
@@ -281,7 +298,7 @@ namespace PCMapDumper
                 string gameVersion = Application.version;
                 bool? randomize = ReadRandomizeMineables();
                 string json = DumpJson.Build(planet, gameVersion, randomize, Source, scan.Objects);
-                string path = WriteDump(planet, json);
+                string path = WriteDump(planet, stamp, json);
 
                 int gIds = scan.Objects.Select(o => o.GId).Distinct(StringComparer.Ordinal).Count();
                 Logger.LogInfo("PCMap dump written: " + path);
@@ -309,12 +326,81 @@ namespace PCMapDumper
                 }
 
                 Notify("PCMap dump: " + scan.Objects.Count + " objects of " + planet + " written to " + path
-                    + ". Restart the game before playing on.");
+                    + (heightsEnabled.Value ? ". Sampling heights next." : ". Restart the game before playing on."));
+                return scan;
             }
             catch (Exception ex)
             {
                 Logger.LogError(ex);
                 Notify("PCMap dump failed: " + ex.Message, true);
+                return null;
+            }
+        }
+
+        IEnumerator HeightsRoutine(string planet, string stamp, ScanResult scan)
+        {
+            List<Terrain> terrains;
+            Rect rect;
+            string how;
+            float top, bottom;
+            try
+            {
+                terrains = FindObjectsByType<Terrain>(FindObjectsInactive.Include, FindObjectsSortMode.None)
+                    .Where(t => t != null && t.terrainData != null).ToList();
+                if (!Heights.Region(terrains, scan.Objects, out rect, out how))
+                {
+                    Notify("PCMap heights skipped: no terrain and no objects to bound the grid.", true);
+                    yield break;
+                }
+                top = float.MinValue;
+                bottom = float.MaxValue;
+                foreach (var t in terrains)
+                {
+                    float y = t.transform.position.y;
+                    top = Math.Max(top, y + t.terrainData.size.y);
+                    bottom = Math.Min(bottom, y);
+                }
+                foreach (var o in scan.Objects)
+                {
+                    top = Math.Max(top, (float)o.Y);
+                    bottom = Math.Min(bottom, (float)o.Y);
+                }
+                Logger.LogInfo(string.Format(CultureInfo.InvariantCulture,
+                    "Heights: {0} terrain(s), region from {1} x [{2:0}, {3:0}] z [{4:0}, {5:0}], y [{6:0}, {7:0}]",
+                    terrains.Count, how, rect.xMin, rect.xMax, rect.yMin, rect.yMax, bottom, top));
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError(ex);
+                Notify("PCMap heights failed: " + ex.Message, true);
+                yield break;
+            }
+
+            Notify("PCMap heights: sampling " + planet + " (" + terrains.Count + " terrain(s)). The game may stutter.");
+            HeightsResult result = null;
+            yield return Heights.Sample(terrains, rect, heightsStep.Value, heightsMaxCells.Value, top + 100f,
+                (top - bottom) + 400f, msg => Logger.LogInfo(msg), r => result = r);
+
+            try
+            {
+                if (CurrentPlanetId() != planet)
+                {
+                    Notify("PCMap heights aborted: the planet changed while sampling.", true);
+                    yield break;
+                }
+                string header = Heights.Header(planet, Application.version, Source, result);
+                string path = Heights.Write(ResolveOutputDirectory(), SafeFileName(planet) + "-" + stamp, header, result);
+                Logger.LogInfo("PCMap heights written: " + path + " | " + header);
+                Logger.LogInfo(string.Format(CultureInfo.InvariantCulture,
+                    "Heights: {0}x{1} cells at {2} m, terrain samples={3}, surface samples={4}",
+                    result.Width, result.Height, result.Step, result.TerrainSamples, result.SurfaceSamples));
+                Notify("PCMap heights: " + result.Width + "x" + result.Height + " grid written to " + path
+                    + ". Restart the game before playing on.");
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError(ex);
+                Notify("PCMap heights failed: " + ex.Message, true);
             }
         }
 
@@ -380,11 +466,10 @@ namespace PCMapDumper
             return r;
         }
 
-        string WriteDump(string planet, string json)
+        string WriteDump(string planet, string stamp, string json)
         {
             string dir = ResolveOutputDirectory();
             Directory.CreateDirectory(dir);
-            string stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
             string file = Path.Combine(dir, SafeFileName(planet) + "-" + stamp + ".json");
             string tmp = file + ".tmp";
             File.WriteAllText(tmp, json, new UTF8Encoding(false));
@@ -589,7 +674,7 @@ namespace PCMapDumper
         }
 
         /// <summary>A JSON string literal (RFC 8259 escaping, plus U+2028 and U+2029).</summary>
-        static string Str(string s)
+        internal static string Str(string s)
         {
             var sb = new StringBuilder(s.Length + 2);
             sb.Append('"');

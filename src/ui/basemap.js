@@ -1,4 +1,5 @@
 // Generated basemap: a canvas GridLayer that draws the world frame and an adaptive coordinate grid.
+// Over a relief image (generated from a heightmap, see src/lib/heights.js) it draws transparently: lines only.
 // No game art. In CRS.Simple at tile zoom k, one world unit is 2^k pixels, lat = z (up) and lng = x.
 
 import L from 'leaflet'
@@ -48,8 +49,9 @@ export function labelStep(minor, pxPerUnit) {
  * @param {{ x: number, y: number, z: number }} coords tile coordinates
  * @param {number} size tile size in CSS px
  * @param {[number, number, number, number]|null} frame [minX, minZ, maxX, maxZ]
+ * @param {{ overlay?: boolean }} [opts] overlay: no background or frame fill, so an image below shows through
  */
-export function drawGridTile(ctx, coords, size, frame) {
+export function drawGridTile(ctx, coords, size, frame, { overlay = false } = {}) {
   const c = BASEMAP_COLORS
   const s = 2 ** coords.z
   const x0 = (coords.x * size) / s
@@ -60,8 +62,10 @@ export function drawGridTile(ctx, coords, size, frame) {
   const py = (/** @type {number} */ z) => (zTop - z) * s
   const crisp = (/** @type {number} */ v) => Math.floor(v) + 0.5
 
-  ctx.fillStyle = c.background
-  ctx.fillRect(0, 0, size, size)
+  if (!overlay) {
+    ctx.fillStyle = c.background
+    ctx.fillRect(0, 0, size, size)
+  }
 
   if (frame) {
     const [fx0, fz0, fx1, fz1] = frame
@@ -69,8 +73,10 @@ export function drawGridTile(ctx, coords, size, frame) {
     const top = py(fz1)
     const w = (fx1 - fx0) * s
     const hgt = (fz1 - fz0) * s
-    ctx.fillStyle = c.frameFill
-    ctx.fillRect(left, top, w, hgt)
+    if (!overlay) {
+      ctx.fillStyle = c.frameFill
+      ctx.fillRect(left, top, w, hgt)
+    }
     ctx.strokeStyle = c.frameStroke
     ctx.lineWidth = 1.5
     ctx.setLineDash([6, 4])
@@ -124,7 +130,8 @@ export function drawGridTile(ctx, coords, size, frame) {
 }
 
 /**
- * Leaflet GridLayer that renders {@link drawGridTile}. Options: `frame` ([minX, minZ, maxX, maxZ] or null).
+ * Leaflet GridLayer that renders {@link drawGridTile}. Options: `frame` ([minX, minZ, maxX, maxZ] or null) and
+ * `overlay` (draw lines only, over an image).
  */
 export const GridBasemap = L.GridLayer.extend({
   options: {
@@ -135,6 +142,7 @@ export const GridBasemap = L.GridLayer.extend({
     keepBuffer: 2,
     className: 'pc-basemap',
     frame: null,
+    overlay: false,
   },
 
   /** @param {{ x: number, y: number, z: number }} coords */
@@ -147,7 +155,7 @@ export const GridBasemap = L.GridLayer.extend({
     const ctx = tile.getContext('2d')
     if (ctx) {
       ctx.scale(dpr, dpr)
-      drawGridTile(ctx, coords, size, this.options.frame)
+      drawGridTile(ctx, coords, size, this.options.frame, { overlay: this.options.overlay })
     }
     return tile
   },
